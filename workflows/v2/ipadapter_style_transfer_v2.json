@@ -1,0 +1,117 @@
+{
+  "name": "IPAdapter Style Transfer v2 (Research-based)",
+  "description": "Improved style transfer with style transfer precise weight type for cartoon styles",
+  "variables": {
+    "positive_prompt": "{{positive_prompt}}",
+    "negative_prompt": "{{negative_prompt}}",
+    "checkpoint": "{{checkpoint}}",
+    "clip_vision": "{{clip_vision}}",
+    "ipadapter_model": "{{ipadapter_model}}",
+    "reference_image_b64": "{{reference_image_b64}}",
+    "width": "{{width}}",
+    "height": "{{height}}",
+    "steps": "{{steps}}",
+    "cfg": "{{cfg}}",
+    "sampler": "{{sampler}}",
+    "scheduler": "{{scheduler}}",
+    "ipadapter_weight": "{{ipadapter_weight}}",
+    "weight_type": "{{weight_type}}",
+    "embeds_scaling": "{{embeds_scaling}}",
+    "start_at": "{{start_at}}",
+    "end_at": "{{end_at}}",
+    "seed": "{{seed}}",
+    "output_prefix": "{{output_prefix}}"
+  },
+  "workflow": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "{{checkpoint}}"
+      }
+    },
+    "2": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{positive_prompt}}",
+        "clip": ["1", 1]
+      }
+    },
+    "3": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["1", 1]
+      }
+    },
+    "4": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "batch_size": 1
+      }
+    },
+    "5": {
+      "class_type": "CLIPVisionLoader",
+      "inputs": {
+        "clip_name": "{{clip_vision}}"
+      }
+    },
+    "6": {
+      "class_type": "IPAdapterModelLoader",
+      "inputs": {
+        "ipadapter_file": "{{ipadapter_model}}"
+      }
+    },
+    "7": {
+      "class_type": "LoadImageFromBase64",
+      "inputs": {
+        "base64_data": "{{reference_image_b64}}"
+      }
+    },
+    "8": {
+      "class_type": "IPAdapterAdvanced",
+      "inputs": {
+        "model": ["1", 0],
+        "ipadapter": ["6", 0],
+        "image": ["7", 0],
+        "clip_vision": ["5", 0],
+        "weight": "{{ipadapter_weight}}",
+        "weight_type": "{{weight_type}}",
+        "combine_embeds": "concat",
+        "start_at": "{{start_at}}",
+        "end_at": "{{end_at}}",
+        "embeds_scaling": "{{embeds_scaling}}"
+      }
+    },
+    "9": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": ["8", 0],
+        "positive": ["2", 0],
+        "negative": ["3", 0],
+        "latent_image": ["4", 0],
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "{{sampler}}",
+        "scheduler": "{{scheduler}}",
+        "denoise": 1
+      }
+    },
+    "10": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["9", 0],
+        "vae": ["1", 2]
+      }
+    },
+    "11": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": ["10", 0],
+        "filename_prefix": "{{output_prefix}}"
+      }
+    }
+  }
+}

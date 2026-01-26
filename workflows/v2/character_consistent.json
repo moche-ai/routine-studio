@@ -1,0 +1,178 @@
+{
+  "name": "Character Consistency - IPAdapter FaceID + FaceDetailer",
+  "description": "캐릭터 일관성을 위한 IPAdapter FaceID Plus v2 + FaceDetailer 워크플로우",
+  "version": "1.0",
+  "reference": "https://myaiforce.com/comfyui-instantid-ipadapter/",
+
+  "workflow": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "{{checkpoint}}"
+      }
+    },
+    "2": {
+      "class_type": "CLIPVisionLoader",
+      "inputs": {
+        "clip_name": "{{clip_vision}}"
+      }
+    },
+    "3": {
+      "class_type": "IPAdapterModelLoader",
+      "inputs": {
+        "ipadapter_file": "{{ipadapter_model}}"
+      }
+    },
+    "4": {
+      "class_type": "LoraLoader",
+      "inputs": {
+        "model": ["1", 0],
+        "clip": ["1", 1],
+        "lora_name": "{{faceid_lora}}",
+        "strength_model": "{{lora_strength}}",
+        "strength_clip": "{{lora_strength}}"
+      }
+    },
+    "5": {
+      "class_type": "ETN_LoadImageBase64",
+      "inputs": {
+        "image": "{{reference_image_b64}}"
+      }
+    },
+    "6": {
+      "class_type": "IPAdapterFaceID",
+      "inputs": {
+        "model": ["4", 0],
+        "ipadapter": ["3", 0],
+        "clip_vision": ["2", 0],
+        "image": ["5", 0],
+        "weight": "{{faceid_weight}}",
+        "weight_faceidv2": "{{faceid_v2_weight}}",
+        "weight_type": "{{weight_type}}",
+        "combine_embeds": "concat",
+        "start_at": 0.0,
+        "end_at": 1.0,
+        "embeds_scaling": "V only"
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{positive_prompt}}",
+        "clip": ["4", 1]
+      }
+    },
+    "8": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["4", 1]
+      }
+    },
+    "9": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "batch_size": 1
+      }
+    },
+    "10": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "{{sampler}}",
+        "scheduler": "{{scheduler}}",
+        "denoise": 1.0,
+        "model": ["6", 0],
+        "positive": ["7", 0],
+        "negative": ["8", 0],
+        "latent_image": ["9", 0]
+      }
+    },
+    "11": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["10", 0],
+        "vae": ["1", 2]
+      }
+    },
+    "12": {
+      "class_type": "UltralyticsDetectorProvider",
+      "inputs": {
+        "model_name": "{{face_detector}}"
+      }
+    },
+    "13": {
+      "class_type": "FaceDetailer",
+      "inputs": {
+        "image": ["11", 0],
+        "model": ["4", 0],
+        "clip": ["4", 1],
+        "vae": ["1", 2],
+        "positive": ["7", 0],
+        "negative": ["8", 0],
+        "bbox_detector": ["12", 0],
+        "sam_model_opt": null,
+        "segm_detector_opt": null,
+        "detailer_hook": null,
+        "guide_size": 384,
+        "guide_size_for": true,
+        "max_size": 1024,
+        "seed": "{{seed}}",
+        "steps": 20,
+        "cfg": 6.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 0.35,
+        "feather": 5,
+        "noise_mask": true,
+        "force_inpaint": true,
+        "bbox_threshold": 0.5,
+        "bbox_dilation": 10,
+        "bbox_crop_factor": 3.0,
+        "sam_detection_hint": "center-1",
+        "sam_dilation": 0,
+        "sam_threshold": 0.93,
+        "sam_bbox_expansion": 0,
+        "sam_mask_hint_threshold": 0.7,
+        "sam_mask_hint_use_negative": "False",
+        "drop_size": 10,
+        "wildcard": "",
+        "cycle": 1
+      }
+    },
+    "14": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "{{output_prefix}}",
+        "images": ["13", 0]
+      }
+    }
+  },
+
+  "variables": {
+    "checkpoint": "NovaCartoonXL_v6.safetensors",
+    "clip_vision": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
+    "ipadapter_model": "ip-adapter-faceid-plusv2_sdxl.bin",
+    "faceid_lora": "ip-adapter-faceid-plusv2_sdxl_lora.safetensors",
+    "face_detector": "bbox/face_yolov8m.pt",
+    "reference_image_b64": "",
+    "positive_prompt": "solo, 1person, cartoon character, masterpiece, best quality, highly detailed face, sharp focus",
+    "negative_prompt": "lowres, bad anatomy, bad hands, text, error, cropped, worst quality, low quality, blurry, deformed, multiple people, 2girls, 2boys, two people, ugly face, disfigured face",
+    "width": 1024,
+    "height": 1024,
+    "seed": -1,
+    "steps": 30,
+    "cfg": 5.0,
+    "sampler": "euler_ancestral",
+    "scheduler": "normal",
+    "faceid_weight": 0.85,
+    "faceid_v2_weight": 1.0,
+    "lora_strength": 0.75,
+    "weight_type": "linear",
+    "output_prefix": "character_consistent"
+  }
+}

@@ -1,0 +1,18 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: routine-v2-db
+    environment:
+      POSTGRES_USER: routine
+      POSTGRES_PASSWORD: routine
+      POSTGRES_DB: routine_v2
+    volumes:
+      - routine-v2-data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    ports:
+      - "5436:5432"
+    network_mode: bridge
+    restart: unless-stopped
+
+volumes:
+  routine-v2-data:

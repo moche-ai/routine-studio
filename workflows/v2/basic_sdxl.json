@@ -1,0 +1,87 @@
+{
+  "name": "Basic SDXL Character Generation",
+  "description": "기본 SDXL 캐릭터 생성 워크플로우",
+  "version": "2.0",
+  "source": "Best practices from comfyui.org, neurocanvas.net",
+  
+  "workflow": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "{{checkpoint}}"
+      },
+      "_meta": {"title": "Load Checkpoint"}
+    },
+    "2": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{positive_prompt}}",
+        "clip": ["1", 1]
+      },
+      "_meta": {"title": "Positive Prompt"}
+    },
+    "3": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["1", 1]
+      },
+      "_meta": {"title": "Negative Prompt"}
+    },
+    "4": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "batch_size": 1
+      },
+      "_meta": {"title": "Empty Latent"}
+    },
+    "5": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "{{sampler}}",
+        "scheduler": "{{scheduler}}",
+        "denoise": 1.0,
+        "model": ["1", 0],
+        "positive": ["2", 0],
+        "negative": ["3", 0],
+        "latent_image": ["4", 0]
+      },
+      "_meta": {"title": "KSampler"}
+    },
+    "6": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["5", 0],
+        "vae": ["1", 2]
+      },
+      "_meta": {"title": "VAE Decode"}
+    },
+    "7": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "{{output_prefix}}",
+        "images": ["6", 0]
+      },
+      "_meta": {"title": "Save Image"}
+    }
+  },
+  
+  "variables": {
+    "checkpoint": "juggernautXL_v9.safetensors",
+    "positive_prompt": "",
+    "negative_prompt": "lowres, bad anatomy, bad hands, text, error, cropped, worst quality, low quality, blurry, deformed",
+    "width": 1024,
+    "height": 1024,
+    "seed": -1,
+    "steps": 25,
+    "cfg": 6.5,
+    "sampler": "euler_ancestral",
+    "scheduler": "normal",
+    "output_prefix": "character"
+  }
+}

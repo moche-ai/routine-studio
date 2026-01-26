@@ -1,0 +1,62 @@
+{
+  "version": "2.2",
+  "updated": "2025-01-25",
+  "comfyui_base": "/data/comfyui",
+  
+  "models": {
+    "checkpoints": {
+      "realistic": "juggernautXL_v9.safetensors",
+      "anime": "animagineXL_v31.safetensors",
+      "cartoon": "animagineXL_v31.safetensors",
+      "base": "sdxl_base_1.0.safetensors",
+      "sd3": "sd3.5_large_fp8_scaled.safetensors"
+    },
+    "clip_vision": {
+      "ipadapter": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
+      "bigG": "CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors"
+    },
+    "ipadapter": {
+      "sdxl_plus": "ip-adapter-plus_sdxl_vit-h.safetensors",
+      "sdxl_face": "ip-adapter-plus-face_sdxl_vit-h.safetensors"
+    },
+    "vae": {
+      "default": null
+    }
+  },
+  
+  "defaults": {
+    "sdxl": {
+      "width": 1024,
+      "height": 1024,
+      "steps": 25,
+      "cfg": 6.5,
+      "sampler": "euler_ancestral",
+      "scheduler": "normal"
+    },
+    "ipadapter": {
+      "weight": 0.8,
+      "weight_type": "style transfer",
+      "start_at": 0.0,
+      "end_at": 0.9,
+      "steps": 30,
+      "cfg": 7.0
+    }
+  },
+
+  "style_presets": {
+    "cartoon": {
+      "checkpoint": "animagineXL_v31.safetensors",
+      "weight": 0.8,
+      "weight_type": "style transfer",
+      "positive_suffix": "cartoon character, animated style, clean lines, simple shapes, solid colors",
+      "negative_suffix": "realistic, photorealistic, 3d render"
+    },
+    "realistic": {
+      "checkpoint": "juggernautXL_v9.safetensors",
+      "weight": 1.0,
+      "weight_type": "strong style transfer",
+      "positive_suffix": "detailed, high quality, realistic",
+      "negative_suffix": "cartoon, anime, illustration"
+    }
+  }
+}

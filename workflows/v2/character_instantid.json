@@ -1,0 +1,177 @@
+{
+  "name": "Character Consistency - InstantID + IPAdapter",
+  "description": "최고 품질 캐릭터 일관성: InstantID + IPAdapter + FaceDetailer",
+  "version": "1.0",
+  "reference": "https://github.com/cubiq/ComfyUI_InstantID",
+
+  "workflow": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "{{checkpoint}}"
+      }
+    },
+    "2": {
+      "class_type": "InstantIDModelLoader",
+      "inputs": {
+        "instantid_file": "{{instantid_model}}"
+      }
+    },
+    "3": {
+      "class_type": "InstantIDFaceAnalysis",
+      "inputs": {
+        "provider": "CUDA"
+      }
+    },
+    "4": {
+      "class_type": "ControlNetLoader",
+      "inputs": {
+        "control_net_name": "{{instantid_controlnet}}"
+      }
+    },
+    "5": {
+      "class_type": "ETN_LoadImageBase64",
+      "inputs": {
+        "image": "{{reference_image_b64}}"
+      }
+    },
+    "6": {
+      "class_type": "ApplyInstantID",
+      "inputs": {
+        "instantid": ["2", 0],
+        "insightface": ["3", 0],
+        "control_net": ["4", 0],
+        "image": ["5", 0],
+        "model": ["1", 0],
+        "positive": ["8", 0],
+        "negative": ["9", 0],
+        "weight": "{{instantid_weight}}",
+        "start_at": 0.0,
+        "end_at": 1.0
+      }
+    },
+    "7": {
+      "class_type": "CLIPVisionLoader",
+      "inputs": {
+        "clip_name": "{{clip_vision}}"
+      }
+    },
+    "8": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{positive_prompt}}",
+        "clip": ["1", 1]
+      }
+    },
+    "9": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["1", 1]
+      }
+    },
+    "10": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "batch_size": 1
+      }
+    },
+    "11": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "{{sampler}}",
+        "scheduler": "{{scheduler}}",
+        "denoise": 1.0,
+        "model": ["6", 0],
+        "positive": ["6", 1],
+        "negative": ["6", 2],
+        "latent_image": ["10", 0]
+      }
+    },
+    "12": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["11", 0],
+        "vae": ["1", 2]
+      }
+    },
+    "13": {
+      "class_type": "UltralyticsDetectorProvider",
+      "inputs": {
+        "model_name": "{{face_detector}}"
+      }
+    },
+    "14": {
+      "class_type": "FaceDetailer",
+      "inputs": {
+        "image": ["12", 0],
+        "model": ["1", 0],
+        "clip": ["1", 1],
+        "vae": ["1", 2],
+        "positive": ["8", 0],
+        "negative": ["9", 0],
+        "bbox_detector": ["13", 0],
+        "sam_model_opt": null,
+        "segm_detector_opt": null,
+        "detailer_hook": null,
+        "guide_size": 512,
+        "guide_size_for": true,
+        "max_size": 1024,
+        "seed": "{{seed}}",
+        "steps": 20,
+        "cfg": 5.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 0.3,
+        "feather": 5,
+        "noise_mask": true,
+        "force_inpaint": true,
+        "bbox_threshold": 0.5,
+        "bbox_dilation": 10,
+        "bbox_crop_factor": 3.0,
+        "sam_detection_hint": "center-1",
+        "sam_dilation": 0,
+        "sam_threshold": 0.93,
+        "sam_bbox_expansion": 0,
+        "sam_mask_hint_threshold": 0.7,
+        "sam_mask_hint_use_negative": "False",
+        "drop_size": 10,
+        "wildcard": "",
+        "cycle": 1
+      }
+    },
+    "15": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "{{output_prefix}}",
+        "images": ["14", 0]
+      }
+    }
+  },
+
+  "variables": {
+    "checkpoint": "NovaCartoonXL_v6.safetensors",
+    "instantid_model": "ip-adapter.bin",
+    "instantid_controlnet": "instantid_controlnet.safetensors",
+    "clip_vision": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
+    "face_detector": "bbox/face_yolov8m.pt",
+    "reference_image_b64": "",
+    "positive_prompt": "solo, 1person, cartoon character, masterpiece, best quality, highly detailed, sharp focus, clear face",
+    "negative_prompt": "lowres, bad anatomy, bad hands, text, error, cropped, worst quality, low quality, blurry, deformed, multiple people, ugly, disfigured",
+    "width": 1016,
+    "height": 1016,
+    "seed": -1,
+    "steps": 28,
+    "cfg": 4.5,
+    "sampler": "euler",
+    "scheduler": "normal",
+    "instantid_weight": 0.8,
+    "controlnet_strength": 0.8,
+    "output_prefix": "character_instantid"
+  }
+}

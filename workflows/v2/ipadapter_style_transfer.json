@@ -1,0 +1,121 @@
+{
+  "name": "IPAdapter SDXL Style Transfer",
+  "description": "IPAdapter를 사용한 스타일 전이 워크플로우 (SDXL) - 카툰/애니메이션 최적화",
+  "version": "2.2",
+  "source": "cubiq/ComfyUI_IPAdapter_plus, comflowy.com best practices",
+  "reference": "https://github.com/cubiq/ComfyUI_IPAdapter_plus",
+  
+  "workflow": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "{{checkpoint}}"
+      }
+    },
+    "2": {
+      "class_type": "CLIPVisionLoader",
+      "inputs": {
+        "clip_name": "{{clip_vision}}"
+      }
+    },
+    "3": {
+      "class_type": "IPAdapterModelLoader",
+      "inputs": {
+        "ipadapter_file": "{{ipadapter_model}}"
+      }
+    },
+    "4": {
+      "class_type": "ETN_LoadImageBase64",
+      "inputs": {
+        "image": "{{reference_image_b64}}"
+      }
+    },
+    "5": {
+      "class_type": "IPAdapterAdvanced",
+      "inputs": {
+        "model": ["1", 0],
+        "ipadapter": ["3", 0],
+        "clip_vision": ["2", 0],
+        "image": ["4", 0],
+        "weight": "{{ipadapter_weight}}",
+        "weight_type": "{{weight_type}}",
+        "combine_embeds": "concat",
+        "start_at": "{{start_at}}",
+        "end_at": "{{end_at}}",
+        "embeds_scaling": "V only"
+      }
+    },
+    "6": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{positive_prompt}}",
+        "clip": ["1", 1]
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["1", 1]
+      }
+    },
+    "8": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "batch_size": 1
+      }
+    },
+    "9": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "{{sampler}}",
+        "scheduler": "{{scheduler}}",
+        "denoise": 1.0,
+        "model": ["5", 0],
+        "positive": ["6", 0],
+        "negative": ["7", 0],
+        "latent_image": ["8", 0]
+      }
+    },
+    "10": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["9", 0],
+        "vae": ["1", 2]
+      }
+    },
+    "11": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "{{output_prefix}}",
+        "images": ["10", 0]
+      }
+    }
+  },
+  
+  "variables": {
+    "checkpoint": "animagineXL_v31.safetensors",
+    "clip_vision": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
+    "ipadapter_model": "ip-adapter-plus_sdxl_vit-h.safetensors",
+    "reference_image_b64": "",
+    "positive_prompt": "cartoon character, animated style, family guy style, clean lines, simple shapes, solid colors, full body, white background",
+    "negative_prompt": "realistic, photorealistic, photograph, 3d render, lowres, bad anatomy, bad hands, text, error, cropped, worst quality, low quality, blurry, deformed, extra limbs, missing limbs, disfigured",
+    "width": 1024,
+    "height": 1024,
+    "seed": -1,
+    "steps": 30,
+    "cfg": 7.0,
+    "sampler": "euler",
+    "scheduler": "normal",
+    "ipadapter_weight": 0.8,
+    "weight_type": "style transfer",
+    "start_at": 0.0,
+    "end_at": 0.9,
+    "output_prefix": "character_styled"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "Remove Background",
+  "description": "RemBG를 사용한 배경 제거 워크플로우",
+  "version": "1.0",
+  
+  "workflow": {
+    "1": {
+      "class_type": "ETN_LoadImageBase64",
+      "inputs": {
+        "image": "{{input_image_b64}}"
+      }
+    },
+    "2": {
+      "class_type": "Image Remove Background Rembg (mtb)",
+      "inputs": {
+        "image": ["1", 0],
+        "alpha_matting": false,
+        "alpha_matting_foreground_threshold": 240,
+        "alpha_matting_background_threshold": 10,
+        "alpha_matting_erode_size": 10,
+        "post_process_mask": false
+      }
+    },
+    "3": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "{{output_prefix}}",
+        "images": ["2", 0]
+      }
+    }
+  },
+  
+  "variables": {
+    "input_image_b64": "",
+    "output_prefix": "nobg"
+  }
+}

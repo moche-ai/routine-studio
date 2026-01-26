@@ -1,0 +1,85 @@
+{
+  "name": "Qwen Image Edit",
+  "description": "Qwen 모델을 사용한 이미지 편집",
+  "workflow": {
+    "1": {
+      "class_type": "ETN_LoadImageBase64",
+      "inputs": {
+        "image": "{{input_image_b64}}"
+      }
+    },
+    "2": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "qwen_image_vae.safetensors"
+      }
+    },
+    "3": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "qwen_image_edit_2511_fp8mixed.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "4": {
+      "class_type": "DualCLIPLoader",
+      "inputs": {
+        "clip_name1": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "clip_name2": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "type": "hunyuan_image"
+      }
+    },
+    "5": {
+      "class_type": "TextEncodeQwenImageEditPlus",
+      "inputs": {
+        "prompt": "{{edit_instruction}}",
+        "clip": ["4", 0],
+        "vae": ["2", 0],
+        "image1": ["1", 0]
+      }
+    },
+    "6": {
+      "class_type": "VAEEncode",
+      "inputs": {
+        "pixels": ["1", 0],
+        "vae": ["2", 0]
+      }
+    },
+    "7": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": ["3", 0],
+        "positive": ["5", 0],
+        "negative": ["5", 0],
+        "latent_image": ["6", 0],
+        "seed": "{{seed}}",
+        "steps": 30,
+        "cfg": 5.0,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": "{{denoise}}"
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["7", 0],
+        "vae": ["2", 0]
+      }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": ["8", 0],
+        "filename_prefix": "{{output_prefix}}"
+      }
+    }
+  },
+  "variables": {
+    "input_image_b64": "",
+    "edit_instruction": "",
+    "denoise": 0.75,
+    "seed": -1,
+    "output_prefix": "qwen_edit"
+  }
+}
