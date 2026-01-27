@@ -1,0 +1,23 @@
+{
+  "hooks": [
+    {
+      "name": "pre-commit-lint",
+      "trigger": "before_commit",
+      "command": "npm run lint && npm run typecheck",
+      "enabled": true
+    },
+    {
+      "name": "post-edit-format",
+      "trigger": "after_file_edit",
+      "pattern": "*.{ts,tsx,py}",
+      "command": "prettier --write",
+      "enabled": true
+    },
+    {
+      "name": "deploy-notify",
+      "trigger": "after_deploy",
+      "command": "echo 'Deployed successfully'",
+      "enabled": true
+    }
+  ]
+}

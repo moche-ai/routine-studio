@@ -1,0 +1,52 @@
+{
+  "project": {
+    "name": "routine-studio",
+    "description": "Marketing automation platform with video generation",
+    "type": "monorepo"
+  },
+  "agents": {
+    "planner-sisyphus": {
+      "enabled": true,
+      "replace_plan": true
+    },
+    "librarian": {
+      "enabled": true
+    },
+    "explore": {
+      "enabled": true
+    },
+    "oracle": {
+      "enabled": true
+    },
+    "frontend-ui-ux": {
+      "enabled": true
+    },
+    "code-reviewer": {
+      "enabled": true
+    }
+  },
+  "skills": [
+    "frontend-patterns",
+    "backend-patterns",
+    "tdd-workflow",
+    "security-review"
+  ],
+  "lsp": {
+    "typescript-language-server": {
+      "command": ["typescript-language-server", "--stdio"],
+      "extensions": [".ts", ".tsx"],
+      "priority": 10
+    },
+    "pylsp": {
+      "command": ["pylsp"],
+      "extensions": [".py"],
+      "priority": 10
+    }
+  },
+  "paths": {
+    "frontend": "apps/front",
+    "backend": "apps/api",
+    "agents": "agents",
+    "workflows": "workflows"
+  }
+}
