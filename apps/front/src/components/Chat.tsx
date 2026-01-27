@@ -6,21 +6,91 @@ import { AgentStatus } from "./AgentStatus"
 import { Sidebar } from "./Sidebar"
 import { Bot, MessageSquare, Check, Wallet, Rocket, Code, Leaf, ChevronDown, ChevronUp } from "lucide-react"
 
+// 워크플로우 단계 정의
+const WORKFLOW_STEPS = [
+  { key: "channel_name", label: "채널명", short: "1" },
+  { key: "benchmarking", label: "벤치마킹", short: "2" },
+  { key: "character", label: "캐릭터", short: "3" },
+  { key: "tts_settings", label: "음성", short: "4" },
+  { key: "logo", label: "브랜딩", short: "5" },
+  { key: "video_ideas", label: "아이디어", short: "6" },
+  { key: "script", label: "대본", short: "7" },
+]
+
+// 단계 상태 계산
+function getStepStatus(stepKey: string, currentStep: string): "completed" | "current" | "pending" {
+  const stepIndex = WORKFLOW_STEPS.findIndex(s => s.key === currentStep || currentStep.startsWith(s.key))
+  const thisIndex = WORKFLOW_STEPS.findIndex(s => s.key === stepKey)
+
+  if (thisIndex < stepIndex) return "completed"
+  if (thisIndex === stepIndex) return "current"
+  return "pending"
+}
+
+// 프로그레스 바 컴포넌트
+function WorkflowProgress({ currentStep }: { currentStep: string }) {
+  if (currentStep === "idle" || currentStep === "completed") return null
+
+  return (
+    <div className="flex items-center gap-1">
+      {WORKFLOW_STEPS.map((step, idx) => {
+        const status = getStepStatus(step.key, currentStep)
+        const isLast = idx === WORKFLOW_STEPS.length - 1
+
+        return (
+          <div key={step.key} className="flex items-center">
+            {/* 단계 아이콘 */}
+            <div className="relative group">
+              {status === "completed" ? (
+                <div className="w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center">
+                  <Check className="w-3.5 h-3.5 text-white" />
+                </div>
+              ) : status === "current" ? (
+                <div className="w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center animate-pulse">
+                  <span className="text-[10px] font-bold text-white">{step.short}</span>
+                </div>
+              ) : (
+                <div className="w-6 h-6 rounded-full bg-zinc-700 flex items-center justify-center">
+                  <span className="text-[10px] text-zinc-400">{step.short}</span>
+                </div>
+              )}
+
+              {/* 툴팁 */}
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-zinc-800 text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
+                {step.label}
+                {status === "current" && " (진행중)"}
+                {status === "completed" && " ✓"}
+              </div>
+            </div>
+
+            {/* 연결선 */}
+            {!isLast && (
+              <div className={`w-3 h-0.5 ${
+                status === "completed" ? "bg-emerald-500" : "bg-zinc-700"
+              }`} />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 const STEP_LABELS: Record<string, string> = {
   idle: "대기중",
-  channel_name: "1단계: 채널명 생성",
-  benchmarking: "2단계: 채널 벤치마킹",
-  character: "3단계: 캐릭터 생성",
-  character_confirmed: "3단계: 캐릭터 확정",
-  tts_settings: "4단계: 음성 설정",
-  logo: "5단계: 브랜딩 생성",
-  logo_review: "5단계: 브랜딩 선택",
-  video_ideas: "6단계: 영상 아이디어",
-  script: "7단계: 대본 작성",
-  image_prompt: "8단계: 이미지 프롬프트",
-  image_generate: "9단계: 이미지 생성",
-  voiceover: "10단계: 보이스오버",
-  compose: "11단계: 영상 합성",
+  channel_name: "채널명 생성",
+  benchmarking: "채널 벤치마킹",
+  character: "캐릭터 생성",
+  character_confirmed: "캐릭터 확정",
+  tts_settings: "음성 설정",
+  logo: "브랜딩 생성",
+  logo_review: "브랜딩 선택",
+  video_ideas: "영상 아이디어",
+  script: "대본 작성",
+  image_prompt: "이미지 프롬프트",
+  image_generate: "이미지 생성",
+  voiceover: "보이스오버",
+  compose: "영상 합성",
   completed: "완료"
 }
 
@@ -62,7 +132,6 @@ export function Chat() {
     progressEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [progressLog])
 
-  // 새 진행 항목 추가시 애니메이션 트리거
   useEffect(() => {
     if (progressLog.length > prevProgressCountRef.current) {
       setAnimateLatest(true)
@@ -90,40 +159,24 @@ export function Chat() {
   const noMessages = messages.length === 0
   const hasMessages = messages.length > 0
   const stepLabel = STEP_LABELS[currentStep] || currentStep
-  const showStepBadge = currentStep !== "idle" && currentStep !== "completed"
+  const showProgress = currentStep !== "idle" && currentStep !== "completed"
 
-  // 최신 진행 기록 가져오기
   const latestProgress = progressLog.length > 0 ? progressLog[progressLog.length - 1] : null
   const hasMultipleProgress = progressLog.length > 1
 
   return (
     <div className="flex h-screen bg-zinc-900">
-      {/* 애니메이션 스타일 */}
       <style>{`
         @keyframes fadeSlideIn {
-          from {
-            opacity: 0;
-            transform: translateY(-8px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
         }
         @keyframes pulse-glow {
-          0%, 100% {
-            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
-          }
-          50% {
-            box-shadow: 0 0 8px 2px rgba(16, 185, 129, 0.3);
-          }
+          0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+          50% { box-shadow: 0 0 8px 2px rgba(16, 185, 129, 0.3); }
         }
-        .animate-fade-slide-in {
-          animation: fadeSlideIn 0.4s ease-out forwards;
-        }
-        .animate-pulse-glow {
-          animation: pulse-glow 0.6s ease-in-out;
-        }
+        .animate-fade-slide-in { animation: fadeSlideIn 0.4s ease-out forwards; }
+        .animate-pulse-glow { animation: pulse-glow 0.6s ease-in-out; }
       `}</style>
 
       <Sidebar
@@ -143,18 +196,18 @@ export function Chat() {
               <Bot className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="font-semibold text-white">Routine Agent</h1>
-              <p className="text-sm text-zinc-400">
-                {stepLabel}
-              </p>
+              <h1 className="font-semibold text-white">채널 기획 어시스턴트</h1>
+              {showProgress ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <WorkflowProgress currentStep={currentStep} />
+                  <span className="text-xs text-emerald-400">{stepLabel}</span>
+                </div>
+              ) : (
+                <p className="text-sm text-zinc-400">{stepLabel}</p>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {showStepBadge && (
-              <span className="px-2 py-1 text-xs bg-emerald-500/20 text-emerald-400 rounded-full">
-                {currentStep}
-              </span>
-            )}
             {hasMessages && (
               <button
                 onClick={clearCurrentConversation}
@@ -234,79 +287,37 @@ export function Chat() {
 
                     {progressLog.length > 0 && (
                       <div className="border-t border-zinc-700 pt-2 mt-2">
-                        {/* 헤더 - 클릭으로 토글 */}
                         <button
                           onClick={() => setProgressExpanded(!progressExpanded)}
                           className="flex items-center justify-between w-full text-xs text-zinc-500 mb-2 hover:text-zinc-400 transition-colors"
                         >
                           <span>진행 기록 ({progressLog.length})</span>
                           {hasMultipleProgress && (
-                            progressExpanded ? (
-                              <ChevronUp className="w-3 h-3" />
-                            ) : (
-                              <ChevronDown className="w-3 h-3" />
-                            )
+                            progressExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
                           )}
                         </button>
 
-                        {/* 접힌 상태: 최신 항목만 표시 (애니메이션 적용) */}
                         {!progressExpanded && latestProgress && (
-                          <div
-                            className={`flex items-start gap-2 text-xs rounded px-1 py-0.5 -mx-1 ${
-                              animateLatest ? 'animate-fade-slide-in animate-pulse-glow' : ''
-                            }`}
-                          >
+                          <div className={`flex items-start gap-2 text-xs rounded px-1 py-0.5 -mx-1 ${animateLatest ? 'animate-fade-slide-in animate-pulse-glow' : ''}`}>
                             <span className="text-zinc-600 whitespace-nowrap">
-                              {new Date(latestProgress.timestamp).toLocaleTimeString("ko-KR", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                                second: "2-digit"
-                              })}
+                              {new Date(latestProgress.timestamp).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                             </span>
-                            <Check className={`w-3 h-3 mt-0.5 flex-shrink-0 transition-colors ${
-                              animateLatest ? 'text-emerald-300' : 'text-emerald-400'
-                            }`} />
-                            <span className={`transition-colors ${
-                              animateLatest ? 'text-white' : 'text-zinc-300'
-                            }`}>{latestProgress.status}</span>
-                            {latestProgress.detail && (
-                              <span className="text-zinc-500 truncate max-w-[200px]">- {latestProgress.detail}</span>
-                            )}
+                            <Check className={`w-3 h-3 mt-0.5 flex-shrink-0 transition-colors ${animateLatest ? 'text-emerald-300' : 'text-emerald-400'}`} />
+                            <span className={`transition-colors ${animateLatest ? 'text-white' : 'text-zinc-300'}`}>{latestProgress.status}</span>
+                            {latestProgress.detail && <span className="text-zinc-500 truncate max-w-[200px]">- {latestProgress.detail}</span>}
                           </div>
                         )}
 
-                        {/* 펼친 상태: 전체 히스토리 */}
                         {progressExpanded && (
                           <div className="space-y-1 max-h-40 overflow-y-auto">
                             {progressLog.map((item, idx) => (
-                              <div
-                                key={idx}
-                                className={`flex items-start gap-2 text-xs rounded px-1 py-0.5 -mx-1 ${
-                                  idx === progressLog.length - 1 && animateLatest
-                                    ? 'animate-fade-slide-in animate-pulse-glow'
-                                    : ''
-                                }`}
-                              >
+                              <div key={idx} className={`flex items-start gap-2 text-xs rounded px-1 py-0.5 -mx-1 ${idx === progressLog.length - 1 && animateLatest ? 'animate-fade-slide-in animate-pulse-glow' : ''}`}>
                                 <span className="text-zinc-600 whitespace-nowrap">
-                                  {new Date(item.timestamp).toLocaleTimeString("ko-KR", {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                    second: "2-digit"
-                                  })}
+                                  {new Date(item.timestamp).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                                 </span>
-                                <Check className={`w-3 h-3 mt-0.5 flex-shrink-0 ${
-                                  idx === progressLog.length - 1 && animateLatest
-                                    ? 'text-emerald-300'
-                                    : 'text-emerald-400'
-                                }`} />
-                                <span className={`${
-                                  idx === progressLog.length - 1 && animateLatest
-                                    ? 'text-white'
-                                    : 'text-zinc-300'
-                                }`}>{item.status}</span>
-                                {item.detail && (
-                                  <span className="text-zinc-500">- {item.detail}</span>
-                                )}
+                                <Check className={`w-3 h-3 mt-0.5 flex-shrink-0 ${idx === progressLog.length - 1 && animateLatest ? 'text-emerald-300' : 'text-emerald-400'}`} />
+                                <span className={idx === progressLog.length - 1 && animateLatest ? 'text-white' : 'text-zinc-300'}>{item.status}</span>
+                                {item.detail && <span className="text-zinc-500">- {item.detail}</span>}
                               </div>
                             ))}
                             <div ref={progressEndRef} />
