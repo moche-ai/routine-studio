@@ -327,3 +327,175 @@ async def get_analytics_usage(period: str = "30d", db: Session = Depends(get_db)
         },
         "daily_breakdown": []
     }
+
+# ============ DELETE Operations ============
+import os
+import shutil
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def cleanup_session_files(session_id: str, base_path: str = "/data/routine/routine-studio-v2"):
+    """세션 관련 파일 정리"""
+    cleaned = []
+    
+    # 1. JSON 세션 파일 삭제
+    session_json = os.path.join(base_path, "sessions", f"{session_id}.json")
+    if os.path.exists(session_json):
+        os.remove(session_json)
+        cleaned.append(session_json)
+    
+    # 2. 세션별 에셋 폴더 삭제
+    assets_dir = os.path.join(base_path, "assets", session_id)
+    if os.path.exists(assets_dir):
+        shutil.rmtree(assets_dir)
+        cleaned.append(assets_dir)
+    
+    # 3. 세션별 outputs 폴더 삭제
+    outputs_dir = os.path.join(base_path, "outputs", session_id)
+    if os.path.exists(outputs_dir):
+        shutil.rmtree(outputs_dir)
+        cleaned.append(outputs_dir)
+    
+    return cleaned
+
+
+def cleanup_generated_assets(project, base_path: str = "/data/routine/routine-studio-v2"):
+    """GeneratedAsset의 file_path 파일들 삭제"""
+    cleaned = []
+    
+    for asset in project.generated_assets:
+        if asset.file_path and os.path.exists(asset.file_path):
+            try:
+                os.remove(asset.file_path)
+                cleaned.append(asset.file_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete asset file {asset.file_path}: {e}")
+    
+    return cleaned
+
+
+@router.delete("/admin/sessions/{session_id}")
+async def delete_session(session_id: str, db: Session = Depends(get_db)):
+    """세션 삭제 (DB + 파일)"""
+    # 짧은 ID로 조회 시 전체 ID 찾기
+    if len(session_id) <= 8:
+        project = db.query(Project).filter(Project.id.like(f"{session_id}%")).first()
+    else:
+        project = db.query(Project).filter(Project.id == session_id).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    full_id = project.id
+    
+    # 파일 정리
+    cleaned_files = cleanup_session_files(full_id)
+    cleaned_assets = cleanup_generated_assets(project)
+    
+    # DB 삭제 (cascade로 관련 데이터 자동 삭제)
+    db.delete(project)
+    db.commit()
+    
+    return {
+        "success": True,
+        "deleted_session_id": full_id,
+        "cleaned_files": cleaned_files + cleaned_assets
+    }
+
+
+@router.delete("/admin/projects/{project_id}")
+async def delete_project(project_id: str, db: Session = Depends(get_db)):
+    """프로젝트 삭제 (세션 삭제와 동일)"""
+    return await delete_session(project_id, db)
+
+
+@router.delete("/admin/channels/{channel_id}")
+async def delete_channel(channel_id: str, db: Session = Depends(get_db)):
+    """채널 삭제 (프로젝트 삭제와 동일)"""
+    return await delete_session(channel_id, db)
+
+
+@router.delete("/admin/characters/{character_id}")
+async def delete_character(character_id: int, db: Session = Depends(get_db)):
+    """캐릭터 삭제"""
+    character = db.query(Character).filter(Character.id == character_id).first()
+    
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    
+    cleaned_files = []
+    
+    # 캐릭터 이미지 파일 삭제
+    if character.image_path and os.path.exists(character.image_path):
+        try:
+            os.remove(character.image_path)
+            cleaned_files.append(character.image_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete character image: {e}")
+    
+    db.delete(character)
+    db.commit()
+    
+    return {
+        "success": True,
+        "deleted_character_id": character_id,
+        "cleaned_files": cleaned_files
+    }
+
+
+@router.delete("/admin/benchmarks/{benchmark_id}")
+async def delete_benchmark(benchmark_id: int, db: Session = Depends(get_db)):
+    """벤치마크 삭제"""
+    benchmark = db.query(Benchmark).filter(Benchmark.id == benchmark_id).first()
+    
+    if not benchmark:
+        raise HTTPException(status_code=404, detail="Benchmark not found")
+    
+    # 벤치마크 캐시 JSON 파일 삭제
+    cleaned_files = []
+    cache_dir = "/data/routine/routine-studio-v2/benchmark_cache"
+    
+    if benchmark.channel_url:
+        # cache_key 생성해서 파일 찾기
+        handle = benchmark.channel_url.split("/")[-1].lstrip("@")
+        for ext in [".json"]:
+            cache_file = os.path.join(cache_dir, f"{handle}{ext}")
+            if os.path.exists(cache_file):
+                os.remove(cache_file)
+                cleaned_files.append(cache_file)
+    
+    db.delete(benchmark)
+    db.commit()
+    
+    return {
+        "success": True,
+        "deleted_benchmark_id": benchmark_id,
+        "cleaned_files": cleaned_files
+    }
+
+
+@router.delete("/admin/members/{member_id}")
+async def delete_member(member_id: str, db: Session = Depends(get_db)):
+    """멤버 삭제 (관련 모든 데이터 cascade 삭제)"""
+    user = db.query(User).filter(User.id == member_id).first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="Member not found")
+    
+    # 해당 유저의 모든 프로젝트 파일 정리
+    cleaned_files = []
+    for project in user.projects:
+        cleaned_files.extend(cleanup_session_files(project.id))
+        cleaned_files.extend(cleanup_generated_assets(project))
+    
+    # DB 삭제 (cascade로 관련 데이터 자동 삭제)
+    db.delete(user)
+    db.commit()
+    
+    return {
+        "success": True,
+        "deleted_member_id": member_id,
+        "cleaned_files": cleaned_files
+    }
