@@ -12,6 +12,7 @@ sys.path.append('/data/routine/routine-studio-v2')
 from agents.base import AgentResult, AgentStatus
 from agents.planner.agent import PlannerAgent
 from agents.character.agent import CharacterAgent
+from agents.logo_generator.agent import LogoGeneratorAgent
 from agents.benchmarker.agent import BenchmarkerAgent
 from agents.voiceover.agent import VoiceoverAgent
 from agents.image_prompter.agent import ImagePrompterAgent
@@ -30,6 +31,7 @@ class WorkflowStep(Enum):
     BENCHMARKING = 'benchmarking'
     CHARACTER = 'character'
     TTS_SETTINGS = 'tts_settings'
+    LOGO = 'logo'
     VIDEO_IDEAS = 'video_ideas'
     SCRIPT = 'script'
     IMAGE_PROMPT = 'image_prompt'
@@ -84,6 +86,7 @@ class Orchestrator:
         WorkflowStep.BENCHMARKING,
         WorkflowStep.CHARACTER,
         WorkflowStep.TTS_SETTINGS,
+        WorkflowStep.LOGO,
         WorkflowStep.VIDEO_IDEAS,
         WorkflowStep.SCRIPT,
         WorkflowStep.IMAGE_PROMPT,
@@ -97,6 +100,7 @@ class Orchestrator:
         self.sessions: Dict[str, Session] = {}
         self.planner = PlannerAgent()
         self.character_agent = CharacterAgent()
+        self.logo_agent = LogoGeneratorAgent()
         self.benchmarker_agents: Dict[str, BenchmarkerAgent] = {}
         self.voiceover_agent = VoiceoverAgent()
         self.image_prompter_agent = ImagePrompterAgent()
@@ -384,6 +388,223 @@ class Orchestrator:
             return self._format_response(session, result)
 
 
+
+        # ========== LOGO 단계 처리 (로고/배너/워터마크) ==========
+        if current_step == WorkflowStep.LOGO:
+            branding_phase = session.context.get('branding_phase', 'ask')
+            
+            # 1단계: 브랜딩 타입 선택
+            if branding_phase == 'ask':
+                # 초기 메뉴 또는 선택 처리
+                msg_lower = message.lower().strip()
+                
+                # 이전 TTS 단계에서 자동 진행된 경우
+                if not session.context.get('branding_menu_shown'):
+                    session.context['branding_menu_shown'] = True
+                    await self.save_session(session, session_id)
+                    
+                    return AgentResult(
+                        success=True,
+                        step="logo",
+                        message="""🎨 **채널 브랜딩을 설정해주세요!**
+
+생성할 브랜딩 에셋을 선택해주세요:
+
+1️⃣ **로고** (프로필 이미지) - 1024x1024
+2️⃣ **배너** (채널 아트) - 2560x1440  
+3️⃣ **워터마크** (영상 워터마크) - 512x512
+4️⃣ **전체 생성** (로고 + 배너 + 워터마크)
+5️⃣ **건너뛰기** (나중에 생성)
+
+번호를 입력해주세요.""",
+                        needs_feedback=True,
+                        data={"type": "selection", "options": [
+                            {"id": 1, "label": "로고"},
+                            {"id": 2, "label": "배너"},
+                            {"id": 3, "label": "워터마크"},
+                            {"id": 4, "label": "전체 생성"},
+                            {"id": 5, "label": "건너뛰기"}
+                        ]}
+                    )
+                
+                # 사용자 선택 처리
+                if msg_lower in ['5', '건너뛰기', 'skip']:
+                    session.current_step = WorkflowStep.VIDEO_IDEAS
+                    await self.save_session(session, session_id)
+                    
+                    channel_name = session.context.get('channel_name', '채널')
+                    return AgentResult(
+                        success=True,
+                        step="video_ideas",
+                        message=f"""브랜딩 생성을 건너뛰었습니다.
+
+**{channel_name}** 채널 설정이 완료되었습니다!
+
+이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요.""",
+                        needs_feedback=True
+                    )
+                
+                # 생성할 타입 결정
+                types_to_generate = []
+                if msg_lower in ['1', '로고', 'logo']:
+                    types_to_generate = ['logo']
+                elif msg_lower in ['2', '배너', 'banner']:
+                    types_to_generate = ['banner']
+                elif msg_lower in ['3', '워터마크', 'watermark']:
+                    types_to_generate = ['watermark']
+                elif msg_lower in ['4', '전체', 'all']:
+                    types_to_generate = ['logo', 'banner', 'watermark']
+                
+                if types_to_generate:
+                    session.context['branding_queue'] = types_to_generate
+                    session.context['branding_phase'] = 'generating'
+                    session.context['branding_completed'] = []
+                    await self.save_session(session, session_id)
+                    # 첫 번째 타입 생성 시작 (아래 generating 로직으로 이동)
+                else:
+                    return AgentResult(
+                        success=True,
+                        step="logo",
+                        message="1~5 중 번호를 입력해주세요.",
+                        needs_feedback=True
+                    )
+            
+            # 2단계: 생성 중
+            if branding_phase == 'generating' or session.context.get('branding_queue'):
+                queue = session.context.get('branding_queue', [])
+                
+                if not queue:
+                    # 모든 생성 완료
+                    session.current_step = WorkflowStep.VIDEO_IDEAS
+                    session.context['branding_phase'] = 'complete'
+                    await self.save_session(session, session_id)
+                    
+                    channel_name = session.context.get('channel_name', '채널')
+                    completed = session.context.get('branding_completed', [])
+                    completed_str = ', '.join(completed) if completed else '없음'
+                    
+                    return AgentResult(
+                        success=True,
+                        step="video_ideas",
+                        message=f"""✅ **브랜딩 생성 완료!**
+
+생성된 에셋: {completed_str}
+
+**{channel_name}** 채널 설정이 모두 완료되었습니다!
+
+이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요.""",
+                        needs_feedback=True
+                    )
+                
+                current_type = queue[0]
+                
+                # 리뷰 대기 중인지 확인
+                if session.context.get(f'{current_type}_reviewing'):
+                    msg_lower = message.lower().strip()
+                    
+                    if '다시' in msg_lower or 'regenerate' in msg_lower:
+                        session.context.pop(f'{current_type}_reviewing', None)
+                        session.context.pop(f'{current_type}_images', None)
+                        # 재생성 (아래 로직으로 계속)
+                    else:
+                        try:
+                            selection = int(message.strip()) - 1
+                            images = session.context.get(f'{current_type}_images', [])
+                            if 0 <= selection < len(images):
+                                # 선택 완료
+                                session.context[f'selected_{current_type}'] = images[selection]
+                                session.context.pop(f'{current_type}_reviewing', None)
+                                session.context.pop(f'{current_type}_images', None)
+                                
+                                completed = session.context.get('branding_completed', [])
+                                completed.append(current_type)
+                                session.context['branding_completed'] = completed
+                                
+                                # 다음 타입으로
+                                session.context['branding_queue'] = queue[1:]
+                                await self.save_session(session, session_id)
+                                
+                                type_names = {'logo': '로고', 'banner': '배너', 'watermark': '워터마크'}
+                                
+                                if queue[1:]:
+                                    next_type = queue[1]
+                                    return AgentResult(
+                                        success=True,
+                                        step="logo",
+                                        message=f"✅ {type_names.get(current_type, current_type)} 선택 완료!\n\n다음: {type_names.get(next_type, next_type)} 생성 중...",
+                                        needs_feedback=False,
+                                        data={"auto_proceed": True}
+                                    )
+                                else:
+                                    # 모든 생성 완료 - 재귀 호출로 완료 처리
+                                    pass
+                        except ValueError:
+                            pass
+                        
+                        images = session.context.get(f'{current_type}_images', [])
+                        return AgentResult(
+                            success=True,
+                            step="logo",
+                            message=f"숫자를 입력하거나 '다시'를 입력해주세요. (1-{len(images)})",
+                            needs_feedback=True
+                        )
+                
+                # 생성 시작
+                channel_name = session.context.get('channel_name', '')
+                character_info = session.context.get('character_info', {})
+                style = character_info.get('art_style', 'cartoon')
+                category = session.context.get('category', session.context.get('channel_concept', ''))
+                
+                type_names = {'logo': '로고', 'banner': '배너', 'watermark': '워터마크'}
+                
+                try:
+                    logo_result = await self.logo_agent.execute({
+                        'channel_name': channel_name,
+                        'character_info': character_info,
+                        'style': style,
+                        'category': category,
+                        'session_id': session_id,
+                        'branding_type': current_type
+                    })
+                    
+                    if logo_result.success and logo_result.data:
+                        images = logo_result.data.get('images', [])
+                        session.context[f'{current_type}_images'] = images
+                        session.context[f'{current_type}_reviewing'] = True
+                        await self.save_session(session, session_id)
+                        
+                        return AgentResult(
+                            success=True,
+                            step="logo",
+                            message=f"""✅ **{type_names.get(current_type, current_type)} {len(images)}개 생성 완료!**
+
+마음에 드는 것을 선택해주세요.
+- 숫자 입력: 해당 이미지 선택
+- "다시" 입력: 재생성""",
+                            needs_feedback=True,
+                            data={
+                                "type": "branding_selection",
+                                "branding_type": current_type,
+                                "images": images
+                            }
+                        )
+                    else:
+                        raise Exception(logo_result.message)
+                    
+                except Exception as e:
+                    # 실패 시 스킵하고 다음으로
+                    session.context['branding_queue'] = queue[1:]
+                    await self.save_session(session, session_id)
+                    
+                    return AgentResult(
+                        success=True,
+                        step="logo",
+                        message=f"{type_names.get(current_type, current_type)} 생성 실패: {str(e)}\n다음으로 진행합니다...",
+                        needs_feedback=False,
+                        data={"auto_proceed": True}
+                    )
+
+
         # ========== TTS_SETTINGS 단계 처리 ==========
         if current_step == WorkflowStep.TTS_SETTINGS:
             msg_lower = message.lower().strip()
@@ -415,7 +636,7 @@ class Orchestrator:
                 if clone_mode == 'youtube' and session.context.get('tts_youtube_url') and not session.context.get('tts_youtube_time'):
                     session.context['tts_youtube_time'] = message.strip()
                     session.context['tts_voice_option'] = 'youtube'
-                    session.current_step = WorkflowStep.VIDEO_IDEAS
+                    session.current_step = WorkflowStep.LOGO
                     await self.save_session(session, session_id)
                     
                     channel_name = session.context.get('channel_name', '채널')
@@ -429,9 +650,10 @@ class Orchestrator:
 이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요."""
                     return AgentResult(
                         success=True,
-                        step="video_ideas",
+                        step="logo",
                         message=complete_msg,
-                        needs_feedback=True
+                        needs_feedback=True,
+                        data={"auto_proceed": True}
                     )
                 
                 # 샘플 선택 대기 중
@@ -440,7 +662,7 @@ class Orchestrator:
                         sample_idx = int(message.strip()) - 1
                         session.context['tts_sample_idx'] = sample_idx
                         session.context['tts_voice_option'] = 'sample'
-                        session.current_step = WorkflowStep.VIDEO_IDEAS
+                        session.current_step = WorkflowStep.LOGO
                         await self.save_session(session, session_id)
                         
                         channel_name = session.context.get('channel_name', '채널')
@@ -452,7 +674,7 @@ class Orchestrator:
 이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요."""
                         return AgentResult(
                             success=True,
-                            step="video_ideas",
+                            step="logo",
                             message=complete_msg,
                             needs_feedback=True
                         )
@@ -468,7 +690,7 @@ class Orchestrator:
             if msg_lower in ['1', '기본', 'default', 'sohee']:
                 session.context['tts_voice_option'] = 'default'
                 session.context['tts_speaker'] = 'Sohee'
-                session.current_step = WorkflowStep.VIDEO_IDEAS
+                session.current_step = WorkflowStep.LOGO
                 await self.save_session(session, session_id)
                 
                 channel_name = session.context.get('channel_name', '채널')
