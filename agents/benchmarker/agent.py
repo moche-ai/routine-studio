@@ -24,6 +24,12 @@ from .schemas import (
 )
 from .youtube_service import youtube_service
 from .prompts import (
+    REPLICATION_CHANNEL_SETUP_PROMPT,
+    REPLICATION_CONTENT_PLANNING_PROMPT,
+    REPLICATION_THUMBNAIL_GUIDE_PROMPT,
+    REPLICATION_SCRIPT_TEMPLATE_PROMPT,
+    REPLICATION_ENGAGEMENT_PROMPT,
+    REPLICATION_FIRST_VIDEOS_PROMPT,
     THUMBNAIL_ANALYSIS_PROMPT,
     SCRIPT_ANALYSIS_PROMPT,
     CONTENT_STRATEGY_PROMPT,
@@ -34,6 +40,13 @@ from .prompts import (
     INDIVIDUAL_THUMBNAIL_ANALYSIS_PROMPT,
 )
 from .screenshot_service import screenshot_service, ChannelScreenshot
+# DB 캐시 서비스 사용 (폴백 지원)
+try:
+    from .cache_service_db import find_benchmark, save_benchmark, get_cache_summary, delete_benchmark
+    print('[BenchmarkerAgent] Using DB cache service')
+except ImportError:
+    from .cache_service import find_benchmark, save_benchmark, get_cache_summary, delete_benchmark
+    print('[BenchmarkerAgent] Using JSON cache service (fallback)')
 
 def emit_progress(status: str, detail: str = ""):
     """진행 상황 발생"""
@@ -61,6 +74,9 @@ class BenchmarkerAgent(BaseAgent):
         self.channel_screenshots: List[ChannelScreenshot] = []
         self.pending_url: Optional[str] = None
         self.pending_channel_info: Optional[ChannelMetadata] = None
+        self.cached_report: Optional[Dict[str, Any]] = None
+        self.use_cached: bool = False
+        self.cached_report_shown: bool = False  # 캐시 리포트를 보여줬는지 여부
 
     async def execute(self, input_data: Dict[str, Any]) -> AgentResult:
         """에이전트 실행 시작 - 초기 질문"""
@@ -149,7 +165,32 @@ class BenchmarkerAgent(BaseAgent):
         url = self._extract_youtube_url(feedback)
 
         if url:
-            # 채널 정보 미리 가져오기
+            # 캐시된 벤치마크 확인
+            emit_progress("캐시 확인 중", url[:50])
+            cached = find_benchmark(url)
+            
+            if cached:
+                self.cached_report = cached
+                self.pending_url = url
+                self.phase = BenchmarkPhase.CONFIRM
+                self.use_cached = True
+                
+                summary = get_cache_summary(cached)
+                
+                self.status = AgentStatus.WAITING_FEEDBACK
+                return AgentResult(
+                    success=True,
+                    step="benchmark_cached",
+                    message=summary,
+                    needs_feedback=True,
+                    data={
+                        "phase": "cached",
+                        "cached": True,
+                        "report": cached.get("report", {})
+                    }
+                )
+            
+            # 캐시 없으면 채널 정보 가져오기
             emit_progress("채널 확인 중", url[:50])
 
             try:
@@ -221,9 +262,61 @@ class BenchmarkerAgent(BaseAgent):
         """CONFIRM 페이즈 처리 - 채널 확인"""
         feedback_lower = feedback.lower().strip()
 
+        # 다시 분석 요청 (캐시된 결과가 있을 때)
+        reanalyze_keywords = ["다시 분석", "다시분석", "재분석", "업데이트", "새로 분석", "update", "refresh"]
+        if self.use_cached and any(kw in feedback_lower for kw in reanalyze_keywords):
+            # 캐시 삭제
+            if self.pending_url:
+                delete_benchmark(self.pending_url)
+            
+            # 상태 초기화
+            self.use_cached = False
+            self.cached_report = None
+            url = self.pending_url
+            self.pending_url = None
+            self.pending_channel_info = None
+            self.phase = BenchmarkPhase.ASK
+            
+            # 다시 ASK 페이즈로 (캐시 없이)
+            return await self._handle_ask_phase(url)
+
         # 확인 명령
-        confirm_keywords = ["확인", "맞아", "맞음", "네", "응", "yes", "ok", "ㅇㅇ", "추가", "맞습니다", "ㅇ"]
+        confirm_keywords = ["확인", "맞아", "맞음", "네", "응", "yes", "ok", "ㅇㅇ", "추가", "맞습니다", "ㅇ", "다음"]
         if any(kw in feedback_lower for kw in confirm_keywords):
+            # 캐시된 결과가 있는 경우
+            if self.use_cached and self.cached_report:
+                # 이미 리포트를 보여줬으면 완료 처리
+                if self.cached_report_shown:
+                    self.status = AgentStatus.COMPLETED
+                    return AgentResult(
+                        success=True,
+                        step="benchmark_complete",
+                        message="벤치마크 리포트 확인 완료! 다음 단계로 진행합니다.",
+                        needs_feedback=False,
+                        data={
+                            "report": self.report.to_dict() if self.report else {},
+                            "phase": BenchmarkPhase.REPORT.value,
+                            "cached": True
+                        }
+                    )
+
+                # 캐시된 리포트를 처음 보여주는 경우
+                channel_name = self.pending_channel_info.channel_name if self.pending_channel_info else self.pending_url
+                emit_progress("캐시 사용", f"기존 분석 결과를 불러옵니다: {channel_name}")
+
+                # 캐시된 리포트 로드
+                cached_report_data = self.cached_report.get("report", {})
+                self.report = BenchmarkReport.from_dict(cached_report_data)
+                self.channel_urls = self.cached_report.get("channel_urls", [self.pending_url])
+
+                self.pending_url = None
+                self.pending_channel_info = None
+                self.phase = BenchmarkPhase.REPORT
+                self.cached_report_shown = True
+
+                # 리포트 보여주고 확인 대기
+                return await self._show_cached_report()
+            
             if self.pending_url:
                 self.channel_urls.append(self.pending_url)
                 channel_name = self.pending_channel_info.channel_name if self.pending_channel_info else self.pending_url
@@ -451,7 +544,12 @@ class BenchmarkerAgent(BaseAgent):
         emit_progress("리포트 생성", "복제 가이드 작성 중...")
         """종합 리포트 생성"""
         self.report = BenchmarkReport()
+        # 채널 URL과 이름 모두 저장
         self.report.analyzed_channels = self.channel_urls
+        self.report.channel_names = {}  # {url: channel_name}
+        for ch in self.channels_data:
+            if ch.get("channel_info") and ch.get("url"):
+                self.report.channel_names[ch["url"]] = ch["channel_info"].channel_name
         self.report.analyzed_videos_count = sum(
             len(ch.get("videos", [])) for ch in self.channels_data
         )
@@ -477,6 +575,13 @@ class BenchmarkerAgent(BaseAgent):
         # 리포트 출력
         report_message = self._format_report()
 
+        # 벤치마크 결과 캐시에 저장
+        try:
+            cache_key = save_benchmark(self.channel_urls, self.report.to_dict())
+            emit_progress("캐시 저장", f"벤치마크 결과 저장 완료 (key: {cache_key})")
+        except Exception as e:
+            print(f"[BenchmarkerAgent] Failed to save cache: {e}")
+
         self.status = AgentStatus.COMPLETED
 
         return AgentResult(
@@ -486,7 +591,31 @@ class BenchmarkerAgent(BaseAgent):
             needs_feedback=False,
             data={
                 "report": self.report.to_dict(),
-                "phase": BenchmarkPhase.REPORT.value
+                "phase": BenchmarkPhase.REPORT.value,
+                "cached": True
+            }
+        )
+
+    async def _show_cached_report(self) -> AgentResult:
+        """캐시된 리포트를 보여주고 확인 대기"""
+        report_message = self._format_report()
+
+        # 확인 요청 메시지 추가
+        report_message += "\n\n---\n\n**캐시된 벤치마크 리포트입니다.**\n\n"
+        report_message += "• 이 리포트로 진행하려면 **'확인'** 또는 **'다음'**\n"
+        report_message += "• 새로 분석하려면 **'다시 분석'**"
+
+        self.status = AgentStatus.WAITING_FEEDBACK
+
+        return AgentResult(
+            success=True,
+            step="benchmark_cached_report",
+            message=report_message,
+            needs_feedback=True,
+            data={
+                "report": self.report.to_dict() if self.report else {},
+                "phase": BenchmarkPhase.REPORT.value,
+                "cached": True
             }
         )
 
@@ -526,13 +655,22 @@ class BenchmarkerAgent(BaseAgent):
 
             for screenshot in self.channel_screenshots:
                 if screenshot.videos_page:
-                    analysis = await vision_service.analyze_image(
+                    result = await vision_service.analyze_image_with_thinking(
                         screenshot.videos_page,
                         THUMBNAIL_GRID_ANALYSIS_PROMPT
                     )
+                    thinking = result.get("thinking", "")
+                    analysis = result.get("answer", "")
+                    
+                    # thinking 과정 표시
+                    if thinking:
+                        thinking_preview = thinking[:200] + "..." if len(thinking) > 200 else thinking
+                        emit_progress("AI 분석 중", f"[{screenshot.channel_name or 'Channel'}] {thinking_preview}")
+                    
                     grid_analyses.append({
                         "channel": screenshot.channel_name or screenshot.channel_url,
-                        "analysis": analysis
+                        "analysis": analysis,
+                        "thinking": thinking
                     })
 
             # 개별 썸네일도 분석 (더 상세한 패턴 파악)
@@ -651,6 +789,7 @@ Synthesize the patterns and return JSON:
                 channel_name = ch["channel_info"].channel_name
 
         if not all_transcripts:
+            self.report.script_pattern = ScriptPattern(summary="(분석 실패: 자막 데이터 없음)")
             return
 
         try:
@@ -677,8 +816,11 @@ Synthesize the patterns and return JSON:
                     average_length=pattern_data.get("average_length_words", 0),
                     summary=pattern_data.get("summary", ""),
                 )
+            else:
+                self.report.script_pattern = ScriptPattern(summary="(분석 실패: LLM 응답 파싱 실패)")
         except Exception as e:
             print(f"Script analysis failed: {e}")
+            self.report.script_pattern = ScriptPattern(summary=f"(분석 실패: {str(e)[:150]})")
 
     async def _analyze_content_strategy(self):
         emit_progress("콘텐츠 전략 분석", "영상 메타데이터 분석 중...")
@@ -694,6 +836,7 @@ Synthesize the patterns and return JSON:
                 channel_description = ch["channel_info"].description
 
         if not all_videos:
+            self.report.content_strategy = ContentStrategy(summary="(분석 실패: 영상 데이터 없음)")
             return
 
         try:
@@ -720,8 +863,11 @@ Synthesize the patterns and return JSON:
                     engagement_tactics=strategy_data.get("engagement_tactics", []),
                     summary=strategy_data.get("summary", ""),
                 )
+            else:
+                self.report.content_strategy = ContentStrategy(summary="(분석 실패: LLM 응답 파싱 실패)")
         except Exception as e:
             print(f"Content strategy analysis failed: {e}")
+            self.report.content_strategy = ContentStrategy(summary=f"(분석 실패: {str(e)[:150]})")
 
     async def _analyze_channel_concept(self):
         emit_progress("채널 컨셉 분석", "USP 도출 중...")
@@ -742,6 +888,9 @@ Synthesize the patterns and return JSON:
             top_videos.extend(sorted_videos[:5])
 
         if not channel_name:
+            self.report.channel_concept = "(분석 실패: 채널 정보 없음)"
+            self.report.unique_selling_point = "(분석 실패: 채널 정보 없음)"
+            self.report.brand_voice = "(분석 실패: 채널 정보 없음)"
             return
 
         try:
@@ -767,8 +916,16 @@ Synthesize the patterns and return JSON:
                 self.report.channel_concept = concept_data.get("channel_concept", "")
                 self.report.unique_selling_point = concept_data.get("unique_selling_point", "")
                 self.report.brand_voice = concept_data.get("brand_voice", "")
+            else:
+                self.report.channel_concept = "(분석 실패: LLM 응답 파싱 실패)"
+                self.report.unique_selling_point = "(분석 실패: LLM 응답 파싱 실패)"
+                self.report.brand_voice = "(분석 실패: LLM 응답 파싱 실패)"
         except Exception as e:
+            error_msg = f"(분석 실패: {str(e)[:150]})"
             print(f"Channel concept analysis failed: {e}")
+            self.report.channel_concept = error_msg
+            self.report.unique_selling_point = error_msg
+            self.report.brand_voice = error_msg
 
     async def _analyze_audience(self):
         emit_progress("타겟 오디언스 분석", "시청자 프로필 추론 중...")
@@ -783,6 +940,7 @@ Synthesize the patterns and return JSON:
                 video_titles.append(v.title)
 
         if not video_titles:
+            self.report.audience_profile = AudienceProfile(summary="(분석 실패: 영상 데이터 없음)")
             return
 
         try:
@@ -807,52 +965,247 @@ Synthesize the patterns and return JSON:
                     content_preferences=audience_data.get("content_preferences", ""),
                     summary=audience_data.get("summary", ""),
                 )
+            else:
+                self.report.audience_profile = AudienceProfile(summary="(분석 실패: LLM 응답 파싱 실패)")
         except Exception as e:
             print(f"Audience analysis failed: {e}")
+            self.report.audience_profile = AudienceProfile(summary=f"(분석 실패: {str(e)[:150]})")
 
     async def _generate_replication_guide(self):
-        """복제 가이드 생성"""
+        """복제 가이드 생성 - 분리된 호출로 각 섹션 개별 생성"""
+        guide = {}
+        
+        # 공통 컨텍스트
+        channel_concept = self.report.channel_concept or ""
+        usp = self.report.unique_selling_point or ""
+        brand_voice = self.report.brand_voice or ""
+        thumbnail_pattern = self.report.thumbnail_pattern.summary if self.report.thumbnail_pattern else ""
+        script_pattern = self.report.script_pattern.summary if self.report.script_pattern else ""
+        content_strategy = self.report.content_strategy.summary if self.report.content_strategy else ""
+        audience_profile = self.report.audience_profile.summary if self.report.audience_profile else ""
+        
+        # 1. 채널 셋업
+        emit_progress("복제 가이드", "채널 셋업 생성 중...")
         try:
-            prompt = REPLICATION_GUIDE_PROMPT.format(
-                channel_concept=self.report.channel_concept,
-                usp=self.report.unique_selling_point,
-                brand_voice=self.report.brand_voice,
-                thumbnail_pattern=self.report.thumbnail_pattern.summary if self.report.thumbnail_pattern else "",
-                script_pattern=self.report.script_pattern.summary if self.report.script_pattern else "",
-                content_strategy=self.report.content_strategy.summary if self.report.content_strategy else "",
-                audience_profile=self.report.audience_profile.summary if self.report.audience_profile else "",
+            prompt = REPLICATION_CHANNEL_SETUP_PROMPT.format(
+                channel_concept=channel_concept,
+                usp=usp,
+                brand_voice=brand_voice
             )
-
-            response = await llm_service.generate(prompt, temperature=0.7, max_tokens=4096)
-            guide_data = self._parse_json(response)
-
-            if guide_data:
-                self.report.replication_guide = guide_data
+            response = await llm_service.generate(prompt, temperature=0.7, max_tokens=1024)
+            data = self._parse_json(response)
+            if data:
+                guide["channel_setup"] = data
+            else:
+                guide["channel_setup"] = {"error": "생성 실패"}
         except Exception as e:
-            print(f"Replication guide generation failed: {e}")
+            print(f"Channel setup generation failed: {e}")
+            guide["channel_setup"] = {"error": str(e)[:150]}
+        
+        # 2. 콘텐츠 기획
+        emit_progress("복제 가이드", "콘텐츠 기획 생성 중...")
+        try:
+            prompt = REPLICATION_CONTENT_PLANNING_PROMPT.format(
+                channel_concept=channel_concept,
+                content_strategy=content_strategy,
+                audience_profile=audience_profile
+            )
+            response = await llm_service.generate(prompt, temperature=0.7, max_tokens=1024)
+            data = self._parse_json(response)
+            if data:
+                guide["content_planning"] = data
+            else:
+                guide["content_planning"] = {"error": "생성 실패"}
+        except Exception as e:
+            print(f"Content planning generation failed: {e}")
+            guide["content_planning"] = {"error": str(e)[:150]}
+        
+        # 3. 썸네일 가이드
+        emit_progress("복제 가이드", "썸네일 가이드 생성 중...")
+        try:
+            prompt = REPLICATION_THUMBNAIL_GUIDE_PROMPT.format(
+                thumbnail_pattern=thumbnail_pattern,
+                brand_voice=brand_voice
+            )
+            response = await llm_service.generate(prompt, temperature=0.7, max_tokens=1024)
+            data = self._parse_json(response)
+            if data:
+                guide["thumbnail_guide"] = data
+            else:
+                guide["thumbnail_guide"] = {"error": "생성 실패"}
+        except Exception as e:
+            print(f"Thumbnail guide generation failed: {e}")
+            guide["thumbnail_guide"] = {"error": str(e)[:150]}
+        
+        # 4. 스크립트 템플릿
+        emit_progress("복제 가이드", "스크립트 템플릿 생성 중...")
+        try:
+            prompt = REPLICATION_SCRIPT_TEMPLATE_PROMPT.format(
+                script_pattern=script_pattern,
+                brand_voice=brand_voice,
+                audience_profile=audience_profile
+            )
+            response = await llm_service.generate(prompt, temperature=0.7, max_tokens=1024)
+            data = self._parse_json(response)
+            if data:
+                guide["script_template"] = data
+            else:
+                guide["script_template"] = {"error": "생성 실패"}
+        except Exception as e:
+            print(f"Script template generation failed: {e}")
+            guide["script_template"] = {"error": str(e)[:150]}
+        
+        # 5. 참여 전략
+        emit_progress("복제 가이드", "참여 전략 생성 중...")
+        try:
+            prompt = REPLICATION_ENGAGEMENT_PROMPT.format(
+                content_strategy=content_strategy,
+                audience_profile=audience_profile
+            )
+            response = await llm_service.generate(prompt, temperature=0.7, max_tokens=1024)
+            data = self._parse_json(response)
+            if data:
+                guide["engagement_strategy"] = data
+            else:
+                guide["engagement_strategy"] = {"error": "생성 실패"}
+        except Exception as e:
+            print(f"Engagement strategy generation failed: {e}")
+            guide["engagement_strategy"] = {"error": str(e)[:150]}
+        
+        # 6. 첫 영상 아이디어
+        emit_progress("복제 가이드", "첫 영상 아이디어 생성 중...")
+        try:
+            topic_ideas = guide.get("content_planning", {}).get("topic_ideas", [])
+            prompt = REPLICATION_FIRST_VIDEOS_PROMPT.format(
+                channel_concept=channel_concept,
+                content_strategy=content_strategy,
+                topic_ideas=", ".join(topic_ideas) if topic_ideas else "일반 주제"
+            )
+            response = await llm_service.generate(prompt, temperature=0.7, max_tokens=1024)
+            data = self._parse_json(response)
+            if data and "videos" in data:
+                guide["first_10_videos"] = data["videos"]
+            elif data:
+                guide["first_10_videos"] = data
+            else:
+                guide["first_10_videos"] = [{"error": "생성 실패"}]
+        except Exception as e:
+            print(f"First videos generation failed: {e}")
+            guide["first_10_videos"] = [{"error": str(e)[:150]}]
+        
+        self.report.replication_guide = guide
 
     def _parse_json(self, text: str) -> Optional[Dict[str, Any]]:
-        """텍스트에서 JSON 추출"""
+        """텍스트에서 JSON 추출 (개선된 버전)"""
+        if not text:
+            return None
+
+        original_text = text
+
         try:
-            # JSON 블록 찾기
+            # 1. 마크다운 코드 블록 제거
+            text = re.sub(r"```json\s*", "", text)
+            text = re.sub(r"```\s*", "", text)
+            text = text.strip()
+
+            # 2. 직접 JSON 파싱 시도
+            if text.startswith("{"):
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    pass
+
+            # 3. JSON 블록 찾기 (중첩 처리 개선)
             if "{" in text:
                 start = text.find("{")
-                # 중첩된 {} 처리
                 depth = 0
                 end = start
+                in_string = False
+                escape_next = False
+
                 for i, char in enumerate(text[start:], start):
-                    if char == '{':
-                        depth += 1
-                    elif char == '}':
-                        depth -= 1
-                        if depth == 0:
-                            end = i + 1
-                            break
+                    if escape_next:
+                        escape_next = False
+                        continue
+                    if char == "\\":
+                        escape_next = True
+                        continue
+                    if char == '"' and not escape_next:
+                        in_string = not in_string
+                        continue
+                    if not in_string:
+                        if char == "{":
+                            depth += 1
+                        elif char == "}":
+                            depth -= 1
+                            if depth == 0:
+                                end = i + 1
+                                break
 
                 json_str = text[start:end]
-                return json.loads(json_str)
-        except json.JSONDecodeError:
-            pass
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError:
+                    # 4. 일반적인 JSON 오류 수정 시도
+                    # trailing comma 제거
+                    fixed = re.sub(r",\s*}", "}", json_str)
+                    fixed = re.sub(r",\s*]", "]", fixed)
+                    try:
+                        return json.loads(fixed)
+                    except:
+                        pass
+
+                    # 5. 줄바꿈을 공백으로 변경하고 재시도
+                    fixed = json_str.replace("\n", " ").replace("\r", "")
+                    try:
+                        return json.loads(fixed)
+                    except:
+                        pass
+
+            # 6. 마지막 시도: 정규식으로 주요 필드 추출
+            print(f"[_parse_json] JSON 파싱 실패, 폴백 추출 시도")
+            return self._extract_fields_fallback(original_text)
+
+        except json.JSONDecodeError as e:
+            print(f"[_parse_json] JSON 파싱 실패: {str(e)[:100]}")
+            return self._extract_fields_fallback(original_text)
+        except Exception as e:
+            print(f"[_parse_json] 오류: {str(e)[:100]}")
+            return self._extract_fields_fallback(original_text)
+
+    def _extract_fields_fallback(self, text: str) -> Optional[Dict[str, Any]]:
+        """JSON 파싱 실패 시 정규식으로 주요 필드 추출"""
+        if not text:
+            return None
+
+        result = {}
+
+        # 일반적인 키-값 패턴 추출 시도
+        patterns = [
+            (r'"summary"\s*:\s*"([^"]*)"', "summary"),
+            (r'"hook_style"\s*:\s*"([^"]*)"', "hook_style"),
+            (r'"structure"\s*:\s*"([^"]*)"', "structure"),
+            (r'"tone_and_voice"\s*:\s*"([^"]*)"', "tone_and_voice"),
+            (r'"color_palette"\s*:\s*\[([^\]]*)\]', "color_palette"),
+            (r'"text_style"\s*:\s*"([^"]*)"', "text_style"),
+            (r'"layout_style"\s*:\s*"([^"]*)"', "layout_style"),
+            (r'"common_elements"\s*:\s*\[([^\]]*)\]', "common_elements"),
+        ]
+
+        for pattern, key in patterns:
+            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+            if match:
+                value = match.group(1).strip()
+                if key in ["color_palette", "common_elements"]:
+                    items = re.findall(r'"([^"]*)"', value)
+                    result[key] = items if items else []
+                else:
+                    result[key] = value
+
+        if result:
+            print(f"[_parse_json] 폴백 추출 성공: {list(result.keys())}")
+            return result
+
         return None
 
     def _format_report(self) -> str:
@@ -861,16 +1214,30 @@ Synthesize the patterns and return JSON:
 
         sections = []
 
+        # 채널 링크 포맷 (채널명으로 표시, 클릭 시 링크 이동)
+        channel_links = []
+        channel_names = getattr(r, 'channel_names', {})
+        for url in r.analyzed_channels:
+            name = channel_names.get(url, url)
+            channel_links.append(f"[{name}]({url})")
+        channels_display = ', '.join(channel_links) if channel_links else "(채널 정보 없음)"
+
+        # 빈 값 처리 함수
+        def val_or_none(v, label=""):
+            if not v or v.strip() == "":
+                return f"(분석 결과 없음{': ' + label if label else ''})"
+            return v
+
         # 헤더
         header = (
             "# 채널 벤치마킹 리포트\n\n"
-            f"**분석 채널:** {', '.join(r.analyzed_channels)}\n"
+            f"**분석 채널:** {channels_display}\n"
             f"**분석 영상 수:** {r.analyzed_videos_count}개\n\n"
             "---\n\n"
             "## 채널 컨셉\n\n"
-            f"**핵심 컨셉:** {r.channel_concept}\n\n"
-            f"**차별화 포인트 (USP):** {r.unique_selling_point}\n\n"
-            f"**브랜드 보이스:** {r.brand_voice}"
+            f"**핵심 컨셉:** {val_or_none(r.channel_concept)}\n\n"
+            f"**차별화 포인트 (USP):** {val_or_none(r.unique_selling_point)}\n\n"
+            f"**브랜드 보이스:** {val_or_none(r.brand_voice)}"
         )
         sections.append(header)
 
@@ -929,31 +1296,46 @@ Synthesize the patterns and return JSON:
         # 복제 가이드
         if r.replication_guide:
             guide = r.replication_guide
-            first_videos = guide.get("first_10_videos", [])[:5]
-            videos_text = "\n".join([
-                f"  {i+1}. **{v.get('title', '')}** - {v.get('concept', '')}"
-                for i, v in enumerate(first_videos)
-            ])
 
-            guide_section = (
-                "\n---\n\n"
-                "## 복제 가이드\n\n"
-                "### 채널 셋업\n"
-                f"- **네이밍:** {guide.get('channel_setup', {}).get('naming_style', '')}\n"
-                f"- **브랜딩:** {guide.get('channel_setup', {}).get('branding_guidelines', '')}\n\n"
-                "### 콘텐츠 계획\n"
-                f"- **주제 아이디어:** {', '.join(guide.get('content_planning', {}).get('topic_ideas', [])[:5])}\n"
-                f"- **업로드 일정:** {guide.get('content_planning', {}).get('upload_schedule', '')}\n\n"
-                "### 썸네일 가이드\n"
-                f"- **템플릿:** {guide.get('thumbnail_guide', {}).get('template_description', '')}\n"
-                f"- **색상:** {guide.get('thumbnail_guide', {}).get('color_scheme', '')}\n\n"
-                "### 스크립트 템플릿\n"
-                f"- **후킹:** {guide.get('script_template', {}).get('hook_template', '')}\n"
-                f"- **구조:** {guide.get('script_template', {}).get('structure_outline', '')}\n\n"
-                "### 첫 5개 영상 아이디어\n"
-                f"{videos_text}"
-            )
-            sections.append(guide_section)
+            # 에러가 있으면 에러 메시지 표시
+            if guide.get("error"):
+                guide_section = (
+                    "\n---\n\n"
+                    "## 복제 가이드\n\n"
+                    f"**{guide.get('error')}**\n\n"
+                    "복제 가이드 생성에 실패했습니다. 위의 분석 결과를 참고하여 직접 전략을 수립해주세요."
+                )
+                sections.append(guide_section)
+            else:
+                first_videos = guide.get("first_10_videos", [])[:5]
+                videos_text = "\n".join([
+                    f"  {i+1}. **{v.get('title', '')}** - {v.get('concept', '')}"
+                    for i, v in enumerate(first_videos)
+                ]) if first_videos else "(영상 아이디어 생성 실패)"
+
+                # 빈 값 처리 함수
+                def guide_val(section, key, default="(분석 결과 없음)"):
+                    return guide.get(section, {}).get(key, '') or default
+
+                guide_section = (
+                    "\n---\n\n"
+                    "## 복제 가이드\n\n"
+                    "### 채널 셋업\n"
+                    f"- **네이밍:** {guide_val('channel_setup', 'naming_style')}\n"
+                    f"- **브랜딩:** {guide_val('channel_setup', 'branding_guidelines')}\n\n"
+                    "### 콘텐츠 계획\n"
+                    f"- **주제 아이디어:** {', '.join(guide.get('content_planning', {}).get('topic_ideas', [])[:5]) or '(분석 결과 없음)'}\n"
+                    f"- **업로드 일정:** {guide_val('content_planning', 'upload_schedule')}\n\n"
+                    "### 썸네일 가이드\n"
+                    f"- **템플릿:** {guide_val('thumbnail_guide', 'template_description')}\n"
+                    f"- **색상:** {guide_val('thumbnail_guide', 'color_scheme')}\n\n"
+                    "### 스크립트 템플릿\n"
+                    f"- **후킹:** {guide_val('script_template', 'hook_template')}\n"
+                    f"- **구조:** {guide_val('script_template', 'structure_outline')}\n\n"
+                    "### 첫 5개 영상 아이디어\n"
+                    f"{videos_text}"
+                )
+                sections.append(guide_section)
 
         return "\n".join(sections)
 
