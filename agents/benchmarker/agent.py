@@ -40,13 +40,7 @@ from .prompts import (
     INDIVIDUAL_THUMBNAIL_ANALYSIS_PROMPT,
 )
 from .screenshot_service import screenshot_service, ChannelScreenshot
-# DB 캐시 서비스 사용 (폴백 지원)
-try:
-    from .cache_service_db import find_benchmark, save_benchmark, get_cache_summary, delete_benchmark
-    print('[BenchmarkerAgent] Using DB cache service')
-except ImportError:
-    from .cache_service import find_benchmark, save_benchmark, get_cache_summary, delete_benchmark
-    print('[BenchmarkerAgent] Using JSON cache service (fallback)')
+from .cache_service import find_benchmark, save_benchmark, get_cache_summary, delete_benchmark
 
 def emit_progress(status: str, detail: str = ""):
     """진행 상황 발생"""
@@ -615,7 +609,12 @@ class BenchmarkerAgent(BaseAgent):
             data={
                 "report": self.report.to_dict() if self.report else {},
                 "phase": BenchmarkPhase.REPORT.value,
-                "cached": True
+                "cached": True,
+                "type": "selection",
+                "options": [
+                    {"id": 1, "label": "확인 (이 리포트로 진행)"},
+                    {"id": 2, "label": "다시 분석"}
+                ]
             }
         )
 
@@ -1096,116 +1095,42 @@ Synthesize the patterns and return JSON:
         self.report.replication_guide = guide
 
     def _parse_json(self, text: str) -> Optional[Dict[str, Any]]:
-        """텍스트에서 JSON 추출 (개선된 버전)"""
+        """텍스트에서 JSON 추출"""
         if not text:
             return None
-
-        original_text = text
-
         try:
-            # 1. 마크다운 코드 블록 제거
-            text = re.sub(r"```json\s*", "", text)
-            text = re.sub(r"```\s*", "", text)
+            # 마크다운 코드 블록 제거
+            import re
+            text = re.sub(r"```json", "", text)
+            text = re.sub(r"```", "", text)
             text = text.strip()
-
-            # 2. 직접 JSON 파싱 시도
+            
+            # 직접 JSON 파싱 시도
             if text.startswith("{"):
                 try:
                     return json.loads(text)
-                except json.JSONDecodeError:
+                except:
                     pass
-
-            # 3. JSON 블록 찾기 (중첩 처리 개선)
+            
+            # JSON 블록 찾기
             if "{" in text:
                 start = text.find("{")
                 depth = 0
                 end = start
-                in_string = False
-                escape_next = False
-
                 for i, char in enumerate(text[start:], start):
-                    if escape_next:
-                        escape_next = False
-                        continue
-                    if char == "\\":
-                        escape_next = True
-                        continue
-                    if char == '"' and not escape_next:
-                        in_string = not in_string
-                        continue
-                    if not in_string:
-                        if char == "{":
-                            depth += 1
-                        elif char == "}":
-                            depth -= 1
-                            if depth == 0:
-                                end = i + 1
-                                break
-
+                    if char == "{":
+                        depth += 1
+                    elif char == "}":
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
                 json_str = text[start:end]
-                try:
-                    return json.loads(json_str)
-                except json.JSONDecodeError:
-                    # 4. 일반적인 JSON 오류 수정 시도
-                    # trailing comma 제거
-                    fixed = re.sub(r",\s*}", "}", json_str)
-                    fixed = re.sub(r",\s*]", "]", fixed)
-                    try:
-                        return json.loads(fixed)
-                    except:
-                        pass
-
-                    # 5. 줄바꿈을 공백으로 변경하고 재시도
-                    fixed = json_str.replace("\n", " ").replace("\r", "")
-                    try:
-                        return json.loads(fixed)
-                    except:
-                        pass
-
-            # 6. 마지막 시도: 정규식으로 주요 필드 추출
-            print(f"[_parse_json] JSON 파싱 실패, 폴백 추출 시도")
-            return self._extract_fields_fallback(original_text)
-
+                return json.loads(json_str)
         except json.JSONDecodeError as e:
             print(f"[_parse_json] JSON 파싱 실패: {str(e)[:100]}")
-            return self._extract_fields_fallback(original_text)
         except Exception as e:
             print(f"[_parse_json] 오류: {str(e)[:100]}")
-            return self._extract_fields_fallback(original_text)
-
-    def _extract_fields_fallback(self, text: str) -> Optional[Dict[str, Any]]:
-        """JSON 파싱 실패 시 정규식으로 주요 필드 추출"""
-        if not text:
-            return None
-
-        result = {}
-
-        # 일반적인 키-값 패턴 추출 시도
-        patterns = [
-            (r'"summary"\s*:\s*"([^"]*)"', "summary"),
-            (r'"hook_style"\s*:\s*"([^"]*)"', "hook_style"),
-            (r'"structure"\s*:\s*"([^"]*)"', "structure"),
-            (r'"tone_and_voice"\s*:\s*"([^"]*)"', "tone_and_voice"),
-            (r'"color_palette"\s*:\s*\[([^\]]*)\]', "color_palette"),
-            (r'"text_style"\s*:\s*"([^"]*)"', "text_style"),
-            (r'"layout_style"\s*:\s*"([^"]*)"', "layout_style"),
-            (r'"common_elements"\s*:\s*\[([^\]]*)\]', "common_elements"),
-        ]
-
-        for pattern, key in patterns:
-            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-            if match:
-                value = match.group(1).strip()
-                if key in ["color_palette", "common_elements"]:
-                    items = re.findall(r'"([^"]*)"', value)
-                    result[key] = items if items else []
-                else:
-                    result[key] = value
-
-        if result:
-            print(f"[_parse_json] 폴백 추출 성공: {list(result.keys())}")
-            return result
-
         return None
 
     def _format_report(self) -> str:
