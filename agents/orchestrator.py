@@ -7,17 +7,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-# DB Storage Support
-try:
-    from apps.api.services.session_service import (
-        save_session_to_db,
-        load_session_from_db
-    )
-    USE_DB_STORAGE = True
-except ImportError:
-    USE_DB_STORAGE = False
-    print('[Orchestrator] DB storage not available, using JSON fallback')
-
 sys.path.append('/data/routine/routine-studio-v2')
 
 from agents.base import AgentResult, AgentStatus
@@ -40,6 +29,7 @@ class WorkflowStep(Enum):
     CHANNEL_NAME = 'channel_name'
     BENCHMARKING = 'benchmarking'
     CHARACTER = 'character'
+    TTS_SETTINGS = 'tts_settings'
     VIDEO_IDEAS = 'video_ideas'
     SCRIPT = 'script'
     IMAGE_PROMPT = 'image_prompt'
@@ -75,45 +65,12 @@ class Session:
 
 
 def save_session(session: Session):
-    """세션 저장 (DB 우선, JSON 폴백)"""
-    # DB 저장 시도
-    if USE_DB_STORAGE:
-        try:
-            if save_session_to_db(session.to_dict()):
-                # DB 저장 성공해도 JSON 백업 유지
-                _save_session_json(session)
-                return
-        except Exception as e:
-            print(f'[Orchestrator] DB save failed, falling back to JSON: {e}')
-    
-    # JSON 폴백
-    _save_session_json(session)
-
-
-def _save_session_json(session: Session):
-    """JSON 파일로 세션 저장 (레거시/백업)"""
     path = SESSIONS_DIR / f'{session.id}.json'
     with open(path, 'w') as f:
         json.dump(session.to_dict(), f, ensure_ascii=False, indent=2)
 
 
 def load_session(session_id: str) -> Optional[Session]:
-    """세션 로드 (DB 우선, JSON 폴백)"""
-    # DB 로드 시도
-    if USE_DB_STORAGE:
-        try:
-            data = load_session_from_db(session_id)
-            if data:
-                return Session.from_dict(data)
-        except Exception as e:
-            print(f'[Orchestrator] DB load failed, falling back to JSON: {e}')
-    
-    # JSON 폴백
-    return _load_session_json(session_id)
-
-
-def _load_session_json(session_id: str) -> Optional[Session]:
-    """JSON 파일에서 세션 로드 (레거시/백업)"""
     path = SESSIONS_DIR / f'{session_id}.json'
     if path.exists():
         with open(path) as f:
@@ -126,6 +83,7 @@ class Orchestrator:
         WorkflowStep.CHANNEL_NAME,
         WorkflowStep.BENCHMARKING,
         WorkflowStep.CHARACTER,
+        WorkflowStep.TTS_SETTINGS,
         WorkflowStep.VIDEO_IDEAS,
         WorkflowStep.SCRIPT,
         WorkflowStep.IMAGE_PROMPT,
@@ -382,10 +340,37 @@ class Orchestrator:
                     'context': session.context
                 }
 
-        # ========== CHARACTER 확정 후 VIDEO_IDEAS로 자동 진행 ==========
+        # ========== CHARACTER 확정 후 TTS_SETTINGS로 진행 ==========
         if current_step == WorkflowStep.CHARACTER and session.context.get('character_confirmed'):
             session.context.pop('character_confirmed', None)
-            session.current_step = WorkflowStep.VIDEO_IDEAS
+            session.current_step = WorkflowStep.TTS_SETTINGS
+            
+            # TTS 설정 메시지
+            tts_message = """캐릭터가 확정되었습니다! 이제 음성 설정을 해주세요.
+
+**음성 옵션을 선택해주세요:**
+
+1️⃣ **기본 보이스 (Sohee)**
+   - 한국어에 최적화된 따뜻한 여성 음성
+   - 바로 사용 가능
+
+2️⃣ **보이스 클로닝**
+   - 원하는 목소리로 복제하여 사용
+   - YouTube 영상 또는 저장된 샘플 사용
+
+번호를 입력해주세요. (1 또는 2)"""
+            
+            await self.save_session(session, session_id)
+            return AgentResult(
+                success=True,
+                step="tts_settings",
+                message=tts_message,
+                needs_feedback=True,
+                data={"type": "selection", "options": [
+                    {"id": 1, "label": "기본 보이스 (Sohee)"},
+                    {"id": 2, "label": "보이스 클로닝"}
+                ]}
+            )
 
             result = await self.planner.execute({
                 'step': 'video_ideas',
@@ -397,6 +382,160 @@ class Orchestrator:
 
             self._save(session)
             return self._format_response(session, result)
+
+
+        # ========== TTS_SETTINGS 단계 처리 ==========
+        if current_step == WorkflowStep.TTS_SETTINGS:
+            msg_lower = message.lower().strip()
+            
+            # 클로닝 모드 진입
+            if session.context.get('tts_clone_mode'):
+                clone_mode = session.context.get('tts_clone_mode')
+                
+                # YouTube URL 입력 대기 중
+                if clone_mode == 'youtube' and not session.context.get('tts_youtube_url'):
+                    if 'youtube.com' in message or 'youtu.be' in message:
+                        session.context['tts_youtube_url'] = message.strip()
+                        await self.save_session(session, session_id)
+                        return AgentResult(
+                            success=True,
+                            step="tts_settings",
+                            message="YouTube URL이 저장되었습니다. 음성을 추출할 시간대를 입력해주세요.\n예: 0:30-0:45 (30초~45초 구간)",
+                            needs_feedback=True
+                        )
+                    else:
+                        return AgentResult(
+                            success=True,
+                            step="tts_settings",
+                            message="올바른 YouTube URL을 입력해주세요.\n예: https://youtube.com/watch?v=...",
+                            needs_feedback=True
+                        )
+                
+                # YouTube 시간대 입력 대기 중
+                if clone_mode == 'youtube' and session.context.get('tts_youtube_url') and not session.context.get('tts_youtube_time'):
+                    session.context['tts_youtube_time'] = message.strip()
+                    session.context['tts_voice_option'] = 'youtube'
+                    session.current_step = WorkflowStep.VIDEO_IDEAS
+                    await self.save_session(session, session_id)
+                    
+                    channel_name = session.context.get('channel_name', '채널')
+                    complete_msg = f"""음성 설정이 완료되었습니다!
+- 방식: YouTube 보이스 클로닝
+- URL: {session.context.get('tts_youtube_url')}
+- 구간: {message.strip()}
+
+**{channel_name}** 채널 설정이 완료되었습니다!
+
+이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요."""
+                    return AgentResult(
+                        success=True,
+                        step="video_ideas",
+                        message=complete_msg,
+                        needs_feedback=True
+                    )
+                
+                # 샘플 선택 대기 중
+                if clone_mode == 'sample':
+                    try:
+                        sample_idx = int(message.strip()) - 1
+                        session.context['tts_sample_idx'] = sample_idx
+                        session.context['tts_voice_option'] = 'sample'
+                        session.current_step = WorkflowStep.VIDEO_IDEAS
+                        await self.save_session(session, session_id)
+                        
+                        channel_name = session.context.get('channel_name', '채널')
+                        complete_msg = f"""음성 설정이 완료되었습니다!
+- 방식: 저장된 샘플 사용
+
+**{channel_name}** 채널 설정이 완료되었습니다!
+
+이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요."""
+                        return AgentResult(
+                            success=True,
+                            step="video_ideas",
+                            message=complete_msg,
+                            needs_feedback=True
+                        )
+                    except:
+                        return AgentResult(
+                            success=True,
+                            step="tts_settings",
+                            message="올바른 번호를 입력해주세요.",
+                            needs_feedback=True
+                        )
+            
+            # 1번 선택: 기본 보이스
+            if msg_lower in ['1', '기본', 'default', 'sohee']:
+                session.context['tts_voice_option'] = 'default'
+                session.context['tts_speaker'] = 'Sohee'
+                session.current_step = WorkflowStep.VIDEO_IDEAS
+                await self.save_session(session, session_id)
+                
+                channel_name = session.context.get('channel_name', '채널')
+                complete_msg = f"""음성 설정이 완료되었습니다!
+- 음성: 기본 보이스 (Sohee)
+
+**{channel_name}** 채널 설정이 완료되었습니다!
+
+이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요."""
+                return AgentResult(
+                    success=True,
+                    step="video_ideas",
+                    message=complete_msg,
+                    needs_feedback=True
+                )
+            
+            # 2번 선택: 보이스 클로닝
+            if msg_lower in ['2', '클로닝', 'clone', 'cloning']:
+                clone_msg = """**보이스 클로닝 방식을 선택해주세요:**
+
+1️⃣ **YouTube 영상에서 추출**
+   - 원하는 유튜버의 목소리 복제
+   - URL과 시간대 입력 필요
+
+2️⃣ **저장된 샘플 사용**
+   - 미리 준비된 음성 샘플 선택
+
+번호를 입력해주세요. (1 또는 2)"""
+                return AgentResult(
+                    success=True,
+                    step="tts_settings",
+                    message=clone_msg,
+                    needs_feedback=True,
+                    data={"type": "selection", "options": [
+                        {"id": 1, "label": "YouTube에서 추출"},
+                        {"id": 2, "label": "저장된 샘플"}
+                    ]}
+                )
+            
+            # 클로닝 하위 옵션
+            if session.context.get('tts_voice_option') is None:
+                if msg_lower == '1' or 'youtube' in msg_lower or 'yt' in msg_lower:
+                    session.context['tts_clone_mode'] = 'youtube'
+                    await self.save_session(session, session_id)
+                    return AgentResult(
+                        success=True,
+                        step="tts_settings",
+                        message="복제할 목소리가 있는 YouTube 영상 URL을 입력해주세요.\n예: https://youtube.com/watch?v=...",
+                        needs_feedback=True
+                    )
+                elif msg_lower == '2' or '샘플' in msg_lower or 'sample' in msg_lower:
+                    session.context['tts_clone_mode'] = 'sample'
+                    await self.save_session(session, session_id)
+                    return AgentResult(
+                        success=True,
+                        step="tts_settings",
+                        message="저장된 샘플 목록:\n(샘플 기능은 아직 준비 중입니다. 기본 보이스를 사용하려면 '1'을 입력해주세요.)",
+                        needs_feedback=True
+                    )
+            
+            # 잘못된 입력
+            return AgentResult(
+                success=True,
+                step="tts_settings",
+                message="1 또는 2를 입력해주세요.",
+                needs_feedback=True
+            )
 
         # ========== VIDEO_IDEAS 단계에서 새 주제 입력 처리 ==========
         if current_step == WorkflowStep.VIDEO_IDEAS:
