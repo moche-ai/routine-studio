@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from contextlib import contextmanager
 
 # Database path
-DB_DIR = Path("/data/routine/routine-studio-v2/data")
+DB_DIR = Path("/app/data")
 DB_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DB_DIR / "routine.db"
 DATABASE_URL = f"sqlite:///{DB_PATH}"

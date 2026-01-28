@@ -1,0 +1,85 @@
+{
+  "1": {
+    "class_type": "ETN_LoadImageBase64",
+    "inputs": {
+      "image": "__INPUT_IMAGE__"
+    }
+  },
+  "2": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "CartoonXL.safetensors"
+    }
+  },
+  "3": {
+    "class_type": "IPAdapterUnifiedLoader",
+    "inputs": {
+      "model": ["2", 0],
+      "preset": "PLUS (high strength)"
+    }
+  },
+  "4": {
+    "class_type": "IPAdapterAdvanced",
+    "inputs": {
+      "model": ["3", 0],
+      "ipadapter": ["3", 1],
+      "image": ["1", 0],
+      "weight": 0.85,
+      "weight_type": "style transfer",
+      "combine_embeds": "average",
+      "start_at": 0.0,
+      "end_at": 1.0,
+      "embeds_scaling": "V only"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["2", 1],
+      "text": "__POSITIVE_PROMPT__"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["2", 1],
+      "text": "blurry, low quality, deformed, ugly, bad anatomy"
+    }
+  },
+  "7": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": ["1", 0],
+      "vae": ["2", 2]
+    }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["4", 0],
+      "positive": ["5", 0],
+      "negative": ["6", 0],
+      "latent_image": ["7", 0],
+      "seed": -1,
+      "steps": 30,
+      "cfg": 7.0,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 0.55
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["2", 2]
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["9", 0],
+      "filename_prefix": "ipadapter_cartoon"
+    }
+  }
+}

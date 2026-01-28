@@ -1,0 +1,510 @@
+"""
+Admin Routes - Using SQLite Database
+"""
+from fastapi import APIRouter, Depends, Query, HTTPException
+from sqlalchemy.orm import Session
+from typing import Optional
+import json
+import os
+from datetime import datetime, timedelta
+import random
+
+from .auth import get_current_user, require_role, Role
+from database import get_db
+from models import User
+
+router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+# Data file paths (for channels/projects - not yet migrated)
+DATA_DIR = "/data/routine/routine-studio-v2/data"
+CHANNELS_FILE = f"{DATA_DIR}/channels.json"
+PROJECTS_FILE = f"{DATA_DIR}/projects.json"
+
+
+def load_json(filepath: str) -> dict | list:
+    if os.path.exists(filepath):
+        with open(filepath, "r") as f:
+            return json.load(f)
+    return {}
+
+
+def load_channels() -> list:
+    data = load_json(CHANNELS_FILE)
+    return data if isinstance(data, list) else list(data.values()) if data else []
+
+
+def load_projects() -> list:
+    data = load_json(PROJECTS_FILE)
+    return data if isinstance(data, list) else list(data.values()) if data else []
+
+
+# ============ Members ============
+@router.get("/members")
+async def get_members(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    users = db.query(User).all()
+    members = []
+    channels = load_channels()
+    projects = load_projects()
+
+    for user in users:
+        user_channels = [c for c in channels if c.get("owner_id") == user.id]
+        user_projects = [p for p in projects if p.get("owner_id") == user.id]
+        members.append({
+            "id": user.id,
+            "username": user.username,
+            "name": user.name,
+            "role": user.role or "VIEWER",
+            "is_active": True,
+            "is_verified": True,
+            "is_approved": user.is_approved or False,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "last_login_at": user.created_at.isoformat() if user.created_at else None,
+            "channel_count": len(user_channels),
+            "project_count": len(user_projects)
+        })
+    return {"members": members}
+
+
+@router.put("/members/{member_id}/approve")
+async def approve_member(
+    member_id: str,
+    current_user: User = Depends(require_role(Role.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.id == member_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    user.is_approved = True
+    db.commit()
+    return {"success": True, "message": "Member approved"}
+
+
+@router.put("/members/{member_id}/revoke")
+async def revoke_member(
+    member_id: str,
+    current_user: User = Depends(require_role(Role.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.id == member_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    if member_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot revoke your own access")
+
+    user.is_approved = False
+    db.commit()
+    return {"success": True, "message": "Member access revoked"}
+
+
+@router.put("/members/{member_id}/role")
+async def update_member_role(
+    member_id: str,
+    role: Role,
+    current_user: User = Depends(require_role(Role.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.id == member_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    user.role = role.value
+    db.commit()
+    return {"success": True, "message": f"Role updated to {role.value}"}
+
+
+@router.delete("/members/{member_id}")
+async def delete_member(
+    member_id: str,
+    current_user: User = Depends(require_role(Role.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.id == member_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+    if member_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+
+    db.delete(user)
+    db.commit()
+    return {"success": True}
+
+
+@router.get("/sessions")
+async def get_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    users = db.query(User).limit(3).all()
+    sessions = []
+    for user in users:
+        sessions.append({
+            "id": f"sess_{user.id[:8]}",
+            "member_id": user.id,
+            "member_email": user.username,
+            "member_name": user.name,
+            "device_type": random.choice(["desktop", "mobile"]),
+            "browser": random.choice(["Chrome", "Safari", "Firefox"]),
+            "os": random.choice(["macOS", "Windows", "iOS", "Android"]),
+            "ip_address": f"192.168.1.{random.randint(1, 255)}",
+            "location": "Seoul, KR",
+            "created_at": datetime.utcnow().isoformat(),
+            "last_activity_at": datetime.utcnow().isoformat()
+        })
+    return {"sessions": sessions}
+
+
+@router.delete("/sessions/{session_id}")
+async def terminate_session(
+    session_id: str,
+    current_user: User = Depends(require_role(Role.ADMIN, Role.MANAGER))
+):
+    return {"success": True}
+
+
+@router.get("/activity-logs")
+async def get_activity_logs(
+    limit: int = 100,
+    action: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    users = db.query(User).limit(10).all()
+    logs = []
+    actions = ["login", "logout", "channel_create", "project_create", "settings_update"]
+
+    for i, user in enumerate(users):
+        for j in range(3):
+            log_action = action if action else random.choice(actions)
+            logs.append({
+                "id": f"log_{i}_{j}",
+                "member_id": user.id,
+                "member_email": user.username,
+                "member_name": user.name,
+                "action": log_action,
+                "resource_type": "channel" if "channel" in log_action else "project" if "project" in log_action else "user",
+                "resource_id": None,
+                "details": None,
+                "ip_address": f"192.168.1.{random.randint(1, 255)}",
+                "created_at": (datetime.utcnow() - timedelta(hours=i*2+j)).isoformat()
+            })
+
+    if action:
+        logs = [l for l in logs if l["action"] == action]
+
+    return {"logs": logs[:limit]}
+
+
+# ============ Channels ============
+@router.get("/channels")
+async def get_channels(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    channels = load_channels()
+    users = {u.id: u for u in db.query(User).all()}
+
+    result = []
+    for ch in channels:
+        owner = users.get(ch.get("owner_id", ""))
+        result.append({
+            "id": ch.get("id"),
+            "youtube_channel_id": ch.get("youtube_channel_id", ""),
+            "channel_name": ch.get("name", "Unnamed"),
+            "channel_url": ch.get("url"),
+            "subscriber_count": ch.get("subscriber_count", 0),
+            "video_count": ch.get("video_count", 0),
+            "is_connected": ch.get("is_connected", False),
+            "owner_id": ch.get("owner_id"),
+            "owner_email": owner.username if owner else "",
+            "owner_name": owner.name if owner else None,
+            "created_at": ch.get("created_at"),
+            "last_sync_at": ch.get("last_sync_at")
+        })
+    return {"channels": result}
+
+
+@router.get("/channel-settings")
+async def get_channel_settings(current_user: User = Depends(get_current_user)):
+    channels = load_channels()
+    settings = []
+    for ch in channels:
+        settings.append({
+            "id": f"settings_{ch.get('id', '')}",
+            "channel_id": ch.get("id"),
+            "channel_name": ch.get("name", "Unnamed"),
+            "auto_publish": ch.get("auto_publish", False),
+            "default_language": ch.get("language", "ko"),
+            "default_category": ch.get("category", "entertainment"),
+            "thumbnail_style": ch.get("thumbnail_style", "default"),
+            "voice_id": ch.get("voice_id"),
+            "bgm_enabled": ch.get("bgm_enabled", True),
+            "watermark_enabled": ch.get("watermark_enabled", False),
+            "created_at": ch.get("created_at"),
+            "updated_at": ch.get("updated_at", ch.get("created_at"))
+        })
+    return {"settings": settings}
+
+
+@router.put("/channel-settings/{setting_id}")
+async def update_channel_setting(
+    setting_id: str,
+    updates: dict,
+    current_user: User = Depends(require_role(Role.ADMIN, Role.MANAGER))
+):
+    return {"success": True, "setting_id": setting_id}
+
+
+@router.get("/characters")
+async def get_characters(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    channels = load_channels()
+    users = {u.id: u for u in db.query(User).all()}
+    characters = []
+
+    for ch in channels:
+        if ch.get("character"):
+            char = ch["character"]
+            owner = users.get(ch.get("owner_id", ""))
+            characters.append({
+                "id": char.get("id", f"char_{ch.get('id', '')}"),
+                "name": char.get("name", "AI Character"),
+                "description": char.get("description"),
+                "voice_id": char.get("voice_id"),
+                "voice_name": char.get("voice_name"),
+                "avatar_url": char.get("avatar_url"),
+                "channel_id": ch.get("id"),
+                "channel_name": ch.get("name"),
+                "owner_id": ch.get("owner_id"),
+                "owner_email": owner.username if owner else "",
+                "is_active": True,
+                "video_count": ch.get("video_count", 0),
+                "created_at": char.get("created_at", ch.get("created_at")),
+                "updated_at": char.get("updated_at", ch.get("created_at"))
+            })
+    return {"characters": characters}
+
+
+# ============ Videos/Projects ============
+@router.get("/projects")
+async def get_projects(
+    limit: int = 100,
+    status: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    projects = load_projects()
+    channels = load_channels()
+    users = {u.id: u for u in db.query(User).all()}
+
+    channel_map = {ch.get("id"): ch for ch in channels}
+
+    result = []
+    for proj in projects:
+        ch = channel_map.get(proj.get("channel_id"), {})
+        owner = users.get(proj.get("owner_id", ""))
+
+        if status and proj.get("status") != status:
+            continue
+
+        result.append({
+            "id": proj.get("id"),
+            "title": proj.get("title", "Untitled"),
+            "description": proj.get("description"),
+            "status": proj.get("status", "draft"),
+            "channel_id": proj.get("channel_id"),
+            "channel_name": ch.get("name", "Unknown"),
+            "owner_id": proj.get("owner_id"),
+            "owner_email": owner.username if owner else "",
+            "video_url": proj.get("video_url"),
+            "thumbnail_url": proj.get("thumbnail_url"),
+            "duration_seconds": proj.get("duration_seconds"),
+            "created_at": proj.get("created_at"),
+            "updated_at": proj.get("updated_at"),
+            "published_at": proj.get("published_at")
+        })
+
+    return {"projects": result[:limit]}
+
+
+@router.get("/scripts")
+async def get_scripts(
+    limit: int = 100,
+    current_user: User = Depends(get_current_user)
+):
+    projects = load_projects()
+    channels = load_channels()
+
+    channel_map = {ch.get("id"): ch for ch in channels}
+
+    scripts = []
+    for proj in projects:
+        if proj.get("script"):
+            ch = channel_map.get(proj.get("channel_id"), {})
+            script = proj["script"]
+            content = script if isinstance(script, str) else script.get("content", "")
+            word_count = len(content.split())
+
+            scripts.append({
+                "id": f"script_{proj.get('id', '')}",
+                "project_id": proj.get("id"),
+                "project_title": proj.get("title", "Untitled"),
+                "channel_id": proj.get("channel_id"),
+                "channel_name": ch.get("name", "Unknown"),
+                "owner_email": "",
+                "content": content,
+                "word_count": word_count,
+                "estimated_duration_seconds": word_count * 0.5,
+                "language": "ko",
+                "created_at": proj.get("created_at"),
+                "updated_at": proj.get("updated_at")
+            })
+
+    return {"scripts": scripts[:limit]}
+
+
+@router.get("/media")
+async def get_media(
+    limit: int = 100,
+    type: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    projects = load_projects()
+
+    assets = []
+    for proj in projects:
+        proj_id = proj.get('id', '')
+        if proj.get("thumbnail_url"):
+            assets.append({
+                "id": f"thumb_{proj_id}",
+                "project_id": proj_id,
+                "project_title": proj.get("title", "Untitled"),
+                "type": "thumbnail",
+                "filename": f"thumbnail_{proj_id}.jpg",
+                "url": proj["thumbnail_url"],
+                "size_bytes": random.randint(50000, 500000),
+                "mime_type": "image/jpeg",
+                "width": 1280,
+                "height": 720,
+                "duration_seconds": None,
+                "owner_email": "",
+                "created_at": proj.get("created_at")
+            })
+
+        if proj.get("video_url"):
+            assets.append({
+                "id": f"video_{proj_id}",
+                "project_id": proj_id,
+                "project_title": proj.get("title", "Untitled"),
+                "type": "video",
+                "filename": f"video_{proj_id}.mp4",
+                "url": proj["video_url"],
+                "size_bytes": random.randint(10000000, 100000000),
+                "mime_type": "video/mp4",
+                "width": 1920,
+                "height": 1080,
+                "duration_seconds": proj.get("duration_seconds"),
+                "owner_email": "",
+                "created_at": proj.get("created_at")
+            })
+
+    if type:
+        assets = [a for a in assets if a["type"] == type]
+
+    return {"assets": assets[:limit]}
+
+
+# ============ Analytics ============
+@router.get("/analytics/overview")
+async def get_analytics_overview(
+    period: str = "30d",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user_count = db.query(User).count()
+    channels = load_channels()
+    projects = load_projects()
+
+    published = [p for p in projects if p.get("status") == "published"]
+
+    days = int(period.replace("d", ""))
+    change_factor = days / 30
+
+    return {
+        "total_members": user_count,
+        "total_channels": len(channels),
+        "total_projects": len(projects),
+        "total_published_videos": len(published),
+        "members_change": round(random.uniform(-5, 15) * change_factor, 1),
+        "channels_change": round(random.uniform(-3, 10) * change_factor, 1),
+        "projects_change": round(random.uniform(0, 20) * change_factor, 1),
+        "videos_change": round(random.uniform(0, 25) * change_factor, 1),
+        "recent_activity": [
+            {"date": (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d"),
+             "members": random.randint(0, 3),
+             "projects": random.randint(0, 5),
+             "videos": random.randint(0, 2)}
+            for i in range(min(days, 14))
+        ],
+        "top_channels": [
+            {"id": ch.get("id"), "name": ch.get("name", "Unknown"),
+             "videos_count": ch.get("video_count", 0),
+             "subscriber_count": ch.get("subscriber_count", 0)}
+            for ch in sorted(channels, key=lambda x: x.get("video_count", 0), reverse=True)[:5]
+        ]
+    }
+
+
+@router.get("/analytics/usage")
+async def get_analytics_usage(
+    period: str = "30d",
+    current_user: User = Depends(get_current_user)
+):
+    days = int(period.replace("d", ""))
+
+    return {
+        "period": period,
+        "api_calls": {
+            "total": random.randint(1000, 10000) * (days // 7),
+            "by_service": {
+                "openai": random.randint(500, 3000),
+                "tts": random.randint(200, 1000),
+                "image_gen": random.randint(100, 500),
+                "youtube": random.randint(50, 200)
+            },
+            "trend": round(random.uniform(-10, 20), 1)
+        },
+        "compute": {
+            "total_minutes": random.randint(100, 1000) * (days // 7),
+            "gpu_minutes": random.randint(50, 500),
+            "cpu_minutes": random.randint(50, 500),
+            "trend": round(random.uniform(-5, 15), 1)
+        },
+        "storage": {
+            "total_gb": round(random.uniform(10, 100), 2),
+            "media_gb": round(random.uniform(5, 80), 2),
+            "database_gb": round(random.uniform(1, 10), 2),
+            "trend": round(random.uniform(0, 10), 1)
+        },
+        "costs": {
+            "total_usd": round(random.uniform(50, 500), 2),
+            "api_usd": round(random.uniform(20, 200), 2),
+            "compute_usd": round(random.uniform(20, 200), 2),
+            "storage_usd": round(random.uniform(5, 50), 2),
+            "trend": round(random.uniform(-15, 25), 1)
+        },
+        "daily_breakdown": [
+            {"date": (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d"),
+             "api_calls": random.randint(100, 500),
+             "compute_minutes": random.randint(10, 100),
+             "cost_usd": round(random.uniform(1, 20), 2)}
+            for i in range(min(days, 14))
+        ]
+    }

@@ -1,0 +1,36 @@
+{
+  "session_id": "20260126_034941",
+  "url": "http://localhost:5182",
+  "timestamp": "2026-01-26T03:49:41.872952",
+  "tests": {
+    "page_load": {
+      "passed": true,
+      "load_time": 0.554594,
+      "errors": []
+    },
+    "ui_elements": {
+      "passed": true,
+      "elements": {
+        "header": 1,
+        "main_content": 1,
+        "buttons": 8,
+        "inputs": 2,
+        "links": 0
+      },
+      "missing": []
+    },
+    "workflow": {
+      "passed": false,
+      "steps": [
+        "채팅 입력 발견",
+        "메시지 입력 완료"
+      ],
+      "errors": [
+        "전송 버튼 없음"
+      ]
+    }
+  },
+  "css_issues": [],
+  "console_errors": [],
+  "console_warnings": []
+}

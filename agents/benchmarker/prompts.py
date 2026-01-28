@@ -259,3 +259,112 @@ Describe:
 7. Overall mood/emotion conveyed
 
 Be specific and detailed for replication purposes."""
+
+
+# ============ 분리된 복제 가이드 프롬프트들 ============
+
+REPLICATION_CHANNEL_SETUP_PROMPT = """분석된 유튜브 채널의 채널 셋업 가이드를 만들어주세요.
+
+채널 컨셉: {channel_concept}
+차별화 포인트: {usp}
+브랜드 보이스: {brand_voice}
+
+채널 셋업에 대해 구체적으로 작성해주세요:
+1. 채널명 스타일 - 어떤 형태의 이름이 좋을지
+2. 브랜딩 가이드라인 - 시각적 브랜딩 방향
+3. 채널 설명 템플릿 - 소개글 작성 방법
+
+한국어로 JSON 형식으로 응답:
+{{
+    "naming_style": "채널명 가이드 (구체적인 예시 포함)",
+    "branding_guidelines": "시각적 브랜딩 가이드라인",
+    "description_template": "채널 설명 템플릿"
+}}"""
+
+
+REPLICATION_CONTENT_PLANNING_PROMPT = """분석된 유튜브 채널의 콘텐츠 기획 가이드를 만들어주세요.
+
+채널 컨셉: {channel_concept}
+콘텐츠 전략: {content_strategy}
+타겟 오디언스: {audience_profile}
+
+콘텐츠 기획에 대해 구체적으로 작성해주세요:
+1. 추천 주제 아이디어 5개
+2. 업로드 스케줄 권장사항
+3. 영상 포맷 종류
+
+한국어로 JSON 형식으로 응답:
+{{
+    "topic_ideas": ["주제1", "주제2", "주제3", "주제4", "주제5"],
+    "upload_schedule": "업로드 스케줄 권장사항",
+    "video_formats": ["포맷1", "포맷2", "포맷3"]
+}}"""
+
+
+REPLICATION_THUMBNAIL_GUIDE_PROMPT = """당신은 유튜브 썸네일 전문가입니다. 분석된 채널의 썸네일 제작 가이드를 만들어주세요.
+
+썸네일 패턴: {thumbnail_pattern}
+브랜드 보이스: {brand_voice}
+
+중요: 아래 JSON 형식으로만 응답하세요. 설명이나 다른 텍스트 없이 순수 JSON만 출력하세요.
+
+{{
+    "template_description": "썸네일 레이아웃과 구성 요소 상세 설명",
+    "color_scheme": "주요 색상과 배색 가이드",
+    "text_guidelines": "폰트, 크기, 위치, 효과 등 텍스트 스타일",
+    "example_concepts": ["썸네일 컨셉 1", "썸네일 컨셉 2", "썸네일 컨셉 3"]
+}}"""
+
+
+REPLICATION_SCRIPT_TEMPLATE_PROMPT = """당신은 유튜브 스크립트 전문가입니다. 분석된 채널의 스크립트 작성 가이드를 만들어주세요.
+
+스크립트 패턴: {script_pattern}
+브랜드 보이스: {brand_voice}
+타겟 오디언스: {audience_profile}
+
+중요: 아래 JSON 형식으로만 응답하세요. 설명이나 다른 텍스트 없이 순수 JSON만 출력하세요.
+
+{{
+    "hook_template": "영상 시작 후킹 템플릿 예시 문장",
+    "structure_outline": "인트로-본론-마무리 구조 설명",
+    "cta_scripts": ["구독 유도 멘트 예시", "좋아요 유도 멘트 예시"],
+    "tone_guidelines": "말투와 어조 가이드라인"
+}}"""
+
+
+REPLICATION_ENGAGEMENT_PROMPT = """분석된 유튜브 채널의 참여 유도 전략 가이드를 만들어주세요.
+
+콘텐츠 전략: {content_strategy}
+타겟 오디언스: {audience_profile}
+
+참여 전략에 대해 구체적으로 작성해주세요:
+1. 커뮤니티 빌딩 전술 3개
+2. 댓글 참여 전략
+3. CTA 전략
+
+한국어로 JSON 형식으로 응답:
+{{
+    "community_tactics": ["전술1", "전술2", "전술3"],
+    "comment_engagement": "댓글 참여 전략",
+    "call_to_actions": "CTA 전략"
+}}"""
+
+
+REPLICATION_FIRST_VIDEOS_PROMPT = """분석된 유튜브 채널 스타일로 첫 5개 영상 아이디어를 만들어주세요.
+
+채널 컨셉: {channel_concept}
+콘텐츠 전략: {content_strategy}
+추천 주제: {topic_ideas}
+
+각 영상에 대해 제목과 컨셉을 작성해주세요.
+
+한국어로 JSON 형식으로 응답:
+{{
+    "videos": [
+        {{"title": "영상 1 제목", "concept": "간단한 컨셉 설명"}},
+        {{"title": "영상 2 제목", "concept": "간단한 컨셉 설명"}},
+        {{"title": "영상 3 제목", "concept": "간단한 컨셉 설명"}},
+        {{"title": "영상 4 제목", "concept": "간단한 컨셉 설명"}},
+        {{"title": "영상 5 제목", "concept": "간단한 컨셉 설명"}}
+    ]
+}}"""

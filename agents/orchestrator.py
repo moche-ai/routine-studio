@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-sys.path.append('/data/routine/routine-studio-v2')
+sys.path.append("/app")
 
 from agents.base import AgentResult, AgentStatus
 from agents.planner.agent import PlannerAgent
@@ -21,24 +21,25 @@ from agents.composer.agent import ComposerAgent
 from apps.api.services.vision import vision_service
 from apps.api.services.llm import llm_service
 from agents.image_utils import optimize_image
+from apps.api.services.tts import tts_preview_service, TTSError
 
-SESSIONS_DIR = Path('/data/routine/routine-studio-v2/output/.sessions')
+SESSIONS_DIR = Path("/app/output/.sessions")
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class WorkflowStep(Enum):
-    CHANNEL_NAME = 'channel_name'
-    BENCHMARKING = 'benchmarking'
-    CHARACTER = 'character'
-    TTS_SETTINGS = 'tts_settings'
-    LOGO = 'logo'
-    VIDEO_IDEAS = 'video_ideas'
-    SCRIPT = 'script'
-    IMAGE_PROMPT = 'image_prompt'
-    IMAGE_GENERATE = 'image_generate'
-    VOICEOVER = 'voiceover'
-    COMPOSE = 'compose'  # NEW: 영상+음성+자막 합성
-    COMPLETED = 'completed'
+    CHANNEL_NAME = "channel_name"
+    BENCHMARKING = "benchmarking"
+    CHARACTER = "character"
+    TTS_SETTINGS = "tts_settings"
+    LOGO = "logo"
+    VIDEO_IDEAS = "video_ideas"
+    SCRIPT = "script"
+    IMAGE_PROMPT = "image_prompt"
+    IMAGE_GENERATE = "image_generate"
+    VOICEOVER = "voiceover"
+    COMPOSE = "compose"  # NEW: 영상+음성+자막 합성
+    COMPLETED = "completed"
 
 
 @dataclass
@@ -50,30 +51,90 @@ class Session:
 
     def to_dict(self) -> Dict:
         return {
-            'id': self.id,
-            'current_step': self.current_step.value,
-            'context': self.context,
-            'history': self.history
+            "id": self.id,
+            "current_step": self.current_step.value,
+            "context": self.context,
+            "history": self.history,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'Session':
+    def from_dict(cls, data: Dict) -> "Session":
         return cls(
-            id=data['id'],
-            current_step=WorkflowStep(data['current_step']),
-            context=data.get('context', {}),
-            history=data.get('history', [])
+            id=data["id"],
+            current_step=WorkflowStep(data["current_step"]),
+            context=data.get("context", {}),
+            history=data.get("history", []),
         )
 
 
 def save_session(session: Session):
-    path = SESSIONS_DIR / f'{session.id}.json'
-    with open(path, 'w') as f:
+    """Save session to JSON file AND SQLite database"""
+    # 1. Save to JSON file (existing behavior)
+    path = SESSIONS_DIR / f"{session.id}.json"
+    with open(path, "w") as f:
         json.dump(session.to_dict(), f, ensure_ascii=False, indent=2)
+
+    # 2. Sync to SQLite database for admin-dashboard
+    try:
+        from database import get_db_context
+        from models import Project, User
+
+        with get_db_context() as db:
+            # Find or create project
+            project = db.query(Project).filter(Project.id == session.id).first()
+
+            # Get channel name from context
+            channel_name = session.context.get("selected_channel_name") or (
+                session.context.get("channel_names", [""])[0]
+                if session.context.get("channel_names")
+                else None
+            )
+            user_request = session.context.get("user_request", "")
+
+            # Determine status
+            status = (
+                "completed"
+                if session.current_step == WorkflowStep.COMPLETED
+                else "in_progress"
+            )
+
+            if project:
+                # Update existing project
+                project.current_step = session.current_step.value
+                project.context_json = session.context
+                if channel_name:
+                    project.channel_name = channel_name
+                if user_request:
+                    project.user_request = user_request
+                project.status = status
+            else:
+                # Ensure admin user exists
+                admin_user = db.query(User).filter(User.username == "admin").first()
+                if not admin_user:
+                    admin_user = db.query(User).first()  # Fallback to any user
+
+                user_id = admin_user.id if admin_user else "admin"
+
+                # Create new project
+                project = Project(
+                    id=session.id,
+                    user_id=user_id,
+                    channel_name=channel_name,
+                    user_request=user_request,
+                    current_step=session.current_step.value,
+                    status=status,
+                    context_json=session.context,
+                )
+                db.add(project)
+
+            db.commit()
+    except Exception as e:
+        # Log error but do not fail - JSON save is the primary storage
+        print(f"[save_session] DB sync warning: {e}")
 
 
 def load_session(session_id: str) -> Optional[Session]:
-    path = SESSIONS_DIR / f'{session_id}.json'
+    path = SESSIONS_DIR / f"{session_id}.json"
     if path.exists():
         with open(path) as f:
             return Session.from_dict(json.load(f))
@@ -93,8 +154,53 @@ class Orchestrator:
         WorkflowStep.IMAGE_GENERATE,
         WorkflowStep.VOICEOVER,
         WorkflowStep.COMPOSE,  # NEW
-        WorkflowStep.COMPLETED
+        WorkflowStep.COMPLETED,
     ]
+
+    # 단계별 초기화할 context 키
+    STEP_CONTEXT_KEYS = {
+        WorkflowStep.CHANNEL_NAME: [
+            "channel_names",
+            "selected_channel_name",
+            "survey_step",
+            "user_request",
+        ],
+        WorkflowStep.BENCHMARKING: ["benchmark_report", "benchmark_shown"],
+        WorkflowStep.CHARACTER: [
+            "character_image",
+            "character_info",
+            "character_preview",  # 미리보기 상태 (확정 전)
+            "character_confirmed",
+        ],
+        WorkflowStep.TTS_SETTINGS: [
+            "tts_voice_option",
+            "tts_speaker",
+            "tts_clone_mode",
+            "tts_youtube_url",
+            "tts_youtube_time",
+            "tts_sample_idx",
+            "tts_options_shown",
+            "tts_extracted_audio",
+            "tts_extracted_ref_text",
+            "tts_awaiting_confirm",
+            "tts_sample_options",
+        ],
+        WorkflowStep.LOGO: [
+            "selected_logo",
+            "selected_banner",
+            "selected_watermark",
+            "branding_phase",
+            "branding_queue",
+            "branding_completed",
+            "branding_menu_shown",
+        ],
+        WorkflowStep.VIDEO_IDEAS: ["video_ideas", "selected_video_idea"],
+        WorkflowStep.SCRIPT: ["current_script", "script_approved"],
+        WorkflowStep.IMAGE_PROMPT: ["image_prompts", "selected_image_prompt"],
+        WorkflowStep.IMAGE_GENERATE: ["generated_images", "selected_image"],
+        WorkflowStep.VOICEOVER: ["voiceover_audio", "voiceover_approved"],
+        WorkflowStep.COMPOSE: ["composed_video", "compose_approved"],
+    }
 
     def __init__(self):
         self.sessions: Dict[str, Session] = {}
@@ -107,6 +213,24 @@ class Orchestrator:
         self.image_generator_agent = ImageGeneratorAgent()
         self.composer_agent = ComposerAgent()  # NEW
 
+    def _add_to_history(
+        self,
+        session: Session,
+        role: str,
+        content: str,
+        images: list = None,
+        step: str = None,
+    ):
+        """메시지를 히스토리에 추가"""
+        entry = {
+            "role": role,
+            "content": content,
+            "images": images or [],
+            "step": step,
+            "timestamp": __import__("datetime").datetime.now().isoformat(),
+        }
+        session.history.append(entry)
+
     def get_or_create_session(self, session_id: str) -> Session:
         if session_id in self.sessions:
             return self.sessions[session_id]
@@ -114,7 +238,15 @@ class Orchestrator:
         session = load_session(session_id)
         if session:
             self.sessions[session_id] = session
-            for key in ['channel_names', 'selected_channel_name', 'video_ideas', 'selected_video_idea', 'benchmark_report']:
+            for key in [
+                "channel_names",
+                "selected_channel_name",
+                "video_ideas",
+                "selected_video_idea",
+                "benchmark_report",
+                "survey_step",
+                "user_request",
+            ]:
                 if key in session.context:
                     self.planner.set_context(key, session.context[key])
             return session
@@ -125,6 +257,119 @@ class Orchestrator:
 
     def _save(self, session: Session):
         save_session(session)
+
+    def go_to_step(self, session: Session, target_step: WorkflowStep) -> AgentResult:
+        """특정 단계로 이동하고 해당 단계 이후의 context를 초기화"""
+        current_idx = self.STEP_ORDER.index(session.current_step)
+        target_idx = self.STEP_ORDER.index(target_step)
+        print(
+            f"[go_to_step] current_step={session.current_step.value}, target_step={target_step.value}"
+        )
+        print(f"[go_to_step] current_idx={current_idx}, target_idx={target_idx}")
+
+        if target_idx >= current_idx:
+            print(
+                f"[go_to_step] FAILED: target_idx({target_idx}) >= current_idx({current_idx})"
+            )
+            return AgentResult(
+                success=False,
+                message="이전 단계로만 돌아갈 수 있습니다.",
+                needs_feedback=True,
+            )
+
+        # target_step부터 current_step까지의 context 키 삭제
+        print(
+            f"[go_to_step] SUCCESS: Moving from {session.current_step.value} to {target_step.value}"
+        )
+        for step in self.STEP_ORDER[target_idx : current_idx + 1]:
+            if step in self.STEP_CONTEXT_KEYS:
+                for key in self.STEP_CONTEXT_KEYS[step]:
+                    session.context.pop(key, None)
+
+        session.current_step = target_step
+        print(f"[go_to_step] Step changed to {session.current_step.value}")
+
+        step_labels = {
+            WorkflowStep.CHANNEL_NAME: "채널명 설정",
+            WorkflowStep.BENCHMARKING: "벤치마킹",
+            WorkflowStep.CHARACTER: "캐릭터 생성",
+            WorkflowStep.TTS_SETTINGS: "음성 설정",
+            WorkflowStep.LOGO: "브랜딩",
+            WorkflowStep.VIDEO_IDEAS: "영상 아이디어",
+            WorkflowStep.SCRIPT: "대본 작성",
+            WorkflowStep.IMAGE_PROMPT: "이미지 프롬프트",
+            WorkflowStep.IMAGE_GENERATE: "이미지 생성",
+            WorkflowStep.VOICEOVER: "보이스오버",
+            WorkflowStep.COMPOSE: "영상 합성",
+        }
+
+        label = step_labels.get(target_step, target_step.value)
+
+        return AgentResult(
+            success=True,
+            message=f"'{label}' 단계로 돌아왔습니다. 다시 진행해주세요.",
+            needs_feedback=True,
+        )
+
+    async def _restart_step(self, session: Session, target_step: WorkflowStep) -> dict:
+        """특정 단계를 처음부터 다시 시작"""
+
+        if target_step == WorkflowStep.CHANNEL_NAME:
+            user_request = session.context.get("user_request", "유튜브 채널")
+            result = await self.planner.execute(
+                {"step": "channel_name", "user_request": user_request}
+            )
+            self._add_to_history(
+                session, "assistant", result.message, [], "channel_name"
+            )
+            return self._format_response(session, result)
+
+        elif target_step == WorkflowStep.BENCHMARKING:
+            channel_name = session.context.get("selected_channel_name", "")
+            benchmarker = self._get_current_agent(WorkflowStep.BENCHMARKING, session.id)
+            result = await benchmarker.execute(
+                {
+                    "channel_name": channel_name,
+                    "channel_concept": session.context.get("user_request", ""),
+                }
+            )
+            self._add_to_history(
+                session, "assistant", result.message, [], "benchmarking"
+            )
+            return self._format_response(session, result)
+
+        elif target_step == WorkflowStep.CHARACTER:
+            channel_name = session.context.get("selected_channel_name", "채널")
+            msg = f"**{channel_name}** 채널의 캐릭터를 설정해주세요.\n\n캐릭터 이미지를 업로드하거나, 원하는 캐릭터 스타일을 설명해주세요."
+            result = AgentResult(success=True, message=msg, needs_feedback=True)
+            self._add_to_history(session, "assistant", msg, [], "character")
+            return self._format_response(session, result)
+
+        elif target_step == WorkflowStep.TTS_SETTINGS:
+            channel_name = session.context.get("selected_channel_name", "채널")
+            return {
+                "session_id": session.id,
+                "current_step": "tts_settings",
+                "message": f"**{channel_name}** 채널의 음성을 설정해주세요.",
+                "needs_feedback": True,
+                "data": {"show_panel": "tts_settings_panel"},
+            }
+
+        elif target_step == WorkflowStep.LOGO:
+            channel_name = session.context.get("selected_channel_name", "채널")
+            return {
+                "session_id": session.id,
+                "current_step": "logo",
+                "message": f"**{channel_name}** 채널의 로고와 브랜딩을 설정해주세요.",
+                "needs_feedback": True,
+                "data": {"show_panel": "logo_panel"},
+            }
+
+        # fallback
+        result = AgentResult(
+            success=True, message="다시 진행해주세요.", needs_feedback=True
+        )
+        return self._format_response(session, result)
 
     def _get_current_agent(self, step: WorkflowStep, session_id: str = None):
         if step == WorkflowStep.CHARACTER:
@@ -141,32 +386,133 @@ class Orchestrator:
             return self.voiceover_agent
         elif step == WorkflowStep.COMPOSE:
             return self.composer_agent
+        elif step in [WorkflowStep.TTS_SETTINGS, WorkflowStep.LOGO]:
+            # TTS_SETTINGS와 LOGO는 orchestrator가 직접 처리 - 에이전트 없음
+            return None
         return self.planner
 
     def _extract_number(self, message: str) -> Optional[int]:
         if message.strip().isdigit():
             return int(message.strip())
 
-        match = re.search(r'(\d+)\s*번', message)
+        match = re.search(r"(\d+)\s*번", message)
         if match:
             return int(match.group(1))
 
-        korean_nums = {'첫': 1, '두': 2, '세': 3, '네': 4, '다섯': 5,
-                       '여섯': 6, '일곱': 7, '여덟': 8, '아홉': 9, '열': 10}
+        korean_nums = {
+            "첫": 1,
+            "두": 2,
+            "세": 3,
+            "네": 4,
+            "다섯": 5,
+            "여섯": 6,
+            "일곱": 7,
+            "여덟": 8,
+            "아홉": 9,
+            "열": 10,
+        }
         for k, v in korean_nums.items():
             if k in message:
                 return v
 
         return None
 
+    def _parse_go_back_command(self, message: str):
+        """Go-back 명령어 파싱. 대상 단계 반환, 없으면 None. 'previous'는 한 칸 뒤로"""
+        msg = message.strip().lower()
+
+        # 이전 단계로 한 칸 뒤로
+        if msg in [
+            "이전",
+            "이전 단계",
+            "뒤로",
+            "뒤로가기",
+            "back",
+            "go back",
+            "previous",
+        ]:
+            return "previous"
+
+        # 특정 단계로 직접 이동 (한글 + 영어 키워드)
+        step_keywords = {
+            WorkflowStep.CHANNEL_NAME: [
+                "채널명",
+                "채널 이름",
+                "채널명 다시",
+                "1단계",
+                "channel_name",
+                "channel_name 다시",
+            ],
+            WorkflowStep.BENCHMARKING: [
+                "벤치마킹",
+                "벤치마크",
+                "벤치마킹 다시",
+                "2단계",
+                "benchmarking",
+                "benchmarking 다시",
+            ],
+            WorkflowStep.CHARACTER: [
+                "캐릭터",
+                "캐릭터 다시",
+                "3단계",
+                "character",
+                "character 다시",
+            ],
+            WorkflowStep.TTS_SETTINGS: [
+                "음성",
+                "음성 설정",
+                "tts",
+                "음성 다시",
+                "4단계",
+                "tts_settings",
+                "tts_settings 다시",
+            ],
+            WorkflowStep.LOGO: [
+                "로고",
+                "브랜딩",
+                "로고 다시",
+                "브랜딩 다시",
+                "5단계",
+                "logo",
+                "logo 다시",
+            ],
+            WorkflowStep.VIDEO_IDEAS: ["아이디어", "영상 아이디어", "6단계"],
+            WorkflowStep.SCRIPT: ["대본", "스크립트", "7단계"],
+            WorkflowStep.IMAGE_PROMPT: ["이미지 프롬프트", "프롬프트", "8단계"],
+            WorkflowStep.IMAGE_GENERATE: ["이미지 생성", "9단계"],
+            WorkflowStep.VOICEOVER: ["보이스오버", "나레이션", "10단계"],
+            WorkflowStep.COMPOSE: ["합성", "영상 합성", "11단계"],
+        }
+
+        # "다시" 키워드가 포함된 경우 특정 단계 감지
+        for step, keywords in step_keywords.items():
+            for keyword in keywords:
+                if keyword in msg:
+                    return step
+
+        return None
+
     def _is_confirmation(self, message: str) -> bool:
-        confirmations = ['확정', '좋아', '이걸로', '다음', 'ok', 'OK', '완료', '할께', '할게', '확인']
+        confirmations = [
+            "확정",
+            "좋아",
+            "이걸로",
+            "다음",
+            "ok",
+            "OK",
+            "완료",
+            "할께",
+            "할게",
+            "확인",
+        ]
         return any(c in message for c in confirmations)
 
     def _is_selection(self, message: str) -> bool:
         return self._extract_number(message) is not None
 
-    async def _format_character_intro(self, char_info: dict, context: dict = None) -> str:
+    async def _format_character_intro(
+        self, char_info: dict, context: dict = None
+    ) -> str:
         """캐릭터와 채널의 스토리텔링 소개"""
         if not char_info:
             return ""
@@ -184,7 +530,9 @@ class Orchestrator:
 
         # 성별/타입 한국어 변환
         if char_type == "human":
-            char_kr = "여성" if gender == "female" else "남성" if gender == "male" else ""
+            char_kr = (
+                "여성" if gender == "female" else "남성" if gender == "male" else ""
+            )
         elif char_type == "animal":
             char_kr = "귀여운 동물"
         elif char_type == "fantasy":
@@ -219,13 +567,17 @@ class Orchestrator:
 
         # 스토리 제안 생성 (LLM 사용)
         lines.append("")
-        story_suggestion = await self._generate_story_suggestion(char_info, channel_name, user_request)
+        story_suggestion = await self._generate_story_suggestion(
+            char_info, channel_name, user_request
+        )
         if story_suggestion:
             lines.append(f"{story_suggestion}")
 
         return "\n".join(lines)
 
-    async def _generate_story_suggestion(self, char_info: dict, channel_name: str, user_request: str) -> str:
+    async def _generate_story_suggestion(
+        self, char_info: dict, channel_name: str, user_request: str
+    ) -> str:
         """LLM으로 위트있는 스토리 제안 생성"""
 
         # 캐릭터 정보 정리
@@ -245,8 +597,8 @@ class Orchestrator:
 
         prompt = f"""유튜브 채널 캐릭터 소개 멘트를 작성해주세요.
 
-채널명: {channel_name or '(미정)'}
-채널 주제: {user_request or '(미정)'}
+채널명: {channel_name or "(미정)"}
+채널 주제: {user_request or "(미정)"}
 캐릭터: {char_desc}
 
 요청사항:
@@ -254,7 +606,8 @@ class Orchestrator:
 2. 위트있고 재미있게 작성
 3. 1-2문장으로 간결하게
 4. "~하면 좋을 것 같아요!" 형식으로 끝내기
-5. 캐릭터에게 귀여운 별명이나 역할을 부여해도 좋음
+5. 반드시 한국어와 영어만 사용 (한자, 일본어 등 다른 문자 절대 금지)
+6. 캐릭터에게 귀여운 별명이나 역할을 부여해도 좋음
 
 예시:
 - "이 캐릭터가 '월급쟁이 구원자'로 변신해서 직장인들의 재테크 고민을 해결해주면 딱이겠어요!"
@@ -268,7 +621,7 @@ class Orchestrator:
             suggestion = response.strip()
 
             # 따옴표나 불필요한 prefix 제거
-            suggestion = suggestion.strip('"\'')
+            suggestion = suggestion.strip("\"'")
             if suggestion.startswith("- "):
                 suggestion = suggestion[2:]
 
@@ -280,303 +633,468 @@ class Orchestrator:
                 return f"**{channel_name}** 채널의 매력적인 진행자로 활약할 준비가 되었어요!"
             return "이 캐릭터로 멋진 콘텐츠를 만들어볼게요!"
 
-    async def start(self, session_id: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def start(
+        self, session_id: str, input_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
         session = self.get_or_create_session(session_id)
-        session.context['user_request'] = input_data.get('user_request', '')
+        session.context["user_request"] = input_data.get("user_request", "")
 
-        result = await self.planner.execute({
-            'step': 'channel_name',
-            'user_request': input_data.get('user_request', '')
-        })
+        result = await self.planner.execute(
+            {"step": "channel_name", "user_request": input_data.get("user_request", "")}
+        )
 
-        if result.data and 'channel_names' in result.data:
-            session.context['channel_names'] = result.data['channel_names']
+        if result.data and "channel_names" in result.data:
+            session.context["channel_names"] = result.data["channel_names"]
 
         self._save(session)
         return self._format_response(session, result)
 
-    async def process_message(self, session_id: str, message: str, images: List[str] = None) -> Dict[str, Any]:
+    async def process_message(
+        self, session_id: str, message: str, images: List[str] = None
+    ) -> Dict[str, Any]:
         session = self.get_or_create_session(session_id)
         current_step = session.current_step
 
+        # Save user message to history (with optimized images)
+        optimized_user_images = []
+        print(f"[Orchestrator] process_message: images={len(images) if images else 0}")
+        if images:
+            for img in images:
+                try:
+                    opt_img = optimize_image(img)
+                    optimized_user_images.append(opt_img)
+                    print(f"[Orchestrator] Optimized image: {len(opt_img)} chars")
+                except Exception as e:
+                    print(f"[Orchestrator] Image optimization failed: {e}")
+                    optimized_user_images.append(img)
+        self._add_to_history(
+            session, "user", message, optimized_user_images, current_step.value
+        )
+        print(
+            f"[Orchestrator] Added to history: user message with {len(optimized_user_images)} images"
+        )
+
         # 스킵 처리
-        if '스킵' in message or 'skip' in message.lower():
+        if "스킵" in message or "skip" in message.lower():
             result = await self._handle_skip(session)
             self._save(session)
             return self._format_response(session, result)
 
-        # ========== CHARACTER 단계에서 이미지 + 확정 처리 ==========
-        if current_step == WorkflowStep.CHARACTER and images and len(images) > 0:
-            if self._is_confirmation(message):
-                img = images[0]
-                if img.startswith('data:'):
-                    img = img.split(',', 1)[1]
+        # Go-back 명령어 처리
+        print(f"[Orchestrator] Checking go_back for message: '{message}'")
+        go_back_target = self._parse_go_back_command(message)
+        print(f"[Orchestrator] go_back_target: {go_back_target}")
+        if go_back_target is not None:
+            if go_back_target == "previous":
+                # 이전 단계로 한 칸
+                current_idx = self.STEP_ORDER.index(session.current_step)
+                if current_idx > 0:
+                    target_step = self.STEP_ORDER[current_idx - 1]
+                    result = self.go_to_step(session, target_step)
+                else:
+                    result = AgentResult(
+                        success=False,
+                        message="이미 첫 번째 단계입니다.",
+                        needs_feedback=True,
+                    )
+            else:
+                # 특정 단계로 이동
+                target_step = go_back_target
+                result = self.go_to_step(session, target_step)
 
-                char_intro = ''
+            self._save(session)
+
+            # 성공 시 해당 단계 자동 시작
+            if result.success:
+                actual_target = (
+                    target_step
+                    if go_back_target != "previous"
+                    else session.current_step
+                )
+                return await self._restart_step(session, actual_target)
+            return self._format_response(session, result)
+
+        # ========== CHARACTER 단계에서 이미지 + 미리보기/확정 처리 ==========
+        # Step 1: 이미지와 함께 "쓸게" 메시지 -> 미리보기 (분석 + 스토리텔링)
+        if current_step == WorkflowStep.CHARACTER and images and len(images) > 0:
+            # 이미지가 있고 아직 미리보기 상태가 아니면 무조건 미리보기 플로우로
+            if not session.context.get("character_preview"):
+                img = images[0]
+                if img.startswith("data:"):
+                    img = img.split(",", 1)[1]
+
+                char_intro = ""
                 try:
-                    char_info = await vision_service.describe_character_with_thinking(img)
-                    char_intro = await self._format_character_intro(char_info, session.context)
-                    session.context['character_info'] = char_info  # 캐릭터 정보 저장
+                    char_info = await vision_service.describe_character_with_thinking(
+                        img
+                    )
+                    char_intro = await self._format_character_intro(
+                        char_info, session.context
+                    )
+                    session.context["character_info"] = char_info  # 캐릭터 정보 저장
                 except Exception as e:
-                    print(f'[Orchestrator] Character analysis failed: {e}')
-                    char_intro = ''
+                    print(f"[Orchestrator] Character analysis failed: {e}")
+                    char_intro = ""
 
                 optimized_image = optimize_image(images[0])
-                session.context['character_image'] = optimized_image
-                self.character_agent.set_context('character_image', optimized_image)
-
-                session.context['character_confirmed'] = True
+                session.context["character_image"] = optimized_image
+                session.context["character_preview"] = True  # 미리보기 상태
+                self.character_agent.set_context("character_image", optimized_image)
                 self._save(session)
 
+                # 확인 요청 메시지
                 if char_intro:
-                    result_message = f'{char_intro}\n\n다음 단계로 진행하려면 아무 메시지나 입력해주세요.'
+                    result_message = f'{char_intro}\n\n---\n\n**이 캐릭터로 확정할까요?**\n"확정" 또는 "좋아"를 입력하시면 다음 단계로 진행합니다.\n수정이 필요하면 원하는 변경사항을 말씀해주세요.'
                 else:
-                    result_message = '캐릭터 이미지를 저장했습니다.\n\n다음 단계로 진행하려면 아무 메시지나 입력해주세요.'
+                    result_message = '캐릭터 이미지를 분석했습니다.\n\n**이 캐릭터로 확정할까요?**\n"확정" 또는 "좋아"를 입력하시면 다음 단계로 진행합니다.'
+
+                # Save assistant message to history
+                self._add_to_history(
+                    session,
+                    "assistant",
+                    result_message,
+                    [optimized_image] if optimized_image else [],
+                    "character_preview",
+                )
+                self._save(session)
 
                 return {
-                    'session_id': session.id,
-                    'current_step': 'character_confirmed',
-                    'message': result_message,
-                    'images': images,
-                    'needs_feedback': True,
-                    'data': {'character_image': optimized_image, 'pending_next_step': 'video_ideas'},
-                    'success': True,
-                    'context': session.context
+                    "session_id": session.id,
+                    "current_step": "character_preview",
+                    "message": result_message,
+                    "images": images,
+                    "needs_feedback": True,
+                    "data": {
+                        "character_image": optimized_image,
+                        "type": "confirmation",
+                        "options": [
+                            {"id": 1, "label": "확정"},
+                            {"id": 2, "label": "수정하기"},
+                        ],
+                    },
+                    "success": True,
+                    "context": session.context,
                 }
 
+        # Step 2: 미리보기 상태에서 확정 메시지 -> 다음 단계로
+        if current_step == WorkflowStep.CHARACTER and session.context.get(
+            "character_preview"
+        ):
+            if self._is_confirmation(message):
+                session.context["character_preview"] = False
+                session.context["character_confirmed"] = True
+                self._save(session)
+
+                # Save assistant message to history
+                confirmed_msg = "캐릭터가 확정되었습니다! 다음 단계로 진행합니다."
+                self._add_to_history(
+                    session,
+                    "assistant",
+                    confirmed_msg,
+                    [session.context.get("character_image", "")],
+                    "character_confirmed",
+                )
+
+                return {
+                    "session_id": session.id,
+                    "current_step": "character_confirmed",
+                    "message": "캐릭터가 확정되었습니다! 다음 단계로 진행합니다.",
+                    "images": [session.context.get("character_image", "")],
+                    "needs_feedback": True,
+                    "data": {
+                        "character_image": session.context.get("character_image", ""),
+                        "pending_next_step": "tts_settings",
+                        "type": "selection",
+                        "options": [{"id": 1, "label": "다음 단계로"}],
+                    },
+                    "success": True,
+                    "context": session.context,
+                }
+            else:
+                # 수정 요청으로 처리 - 미리보기 상태 해제하고 character agent로
+                session.context["character_preview"] = False
+                self._save(session)
         # ========== CHARACTER 확정 후 TTS_SETTINGS로 진행 ==========
-        if current_step == WorkflowStep.CHARACTER and session.context.get('character_confirmed'):
-            session.context.pop('character_confirmed', None)
+        if current_step == WorkflowStep.CHARACTER and session.context.get(
+            "character_confirmed"
+        ):
+            session.context.pop("character_confirmed", None)
             session.current_step = WorkflowStep.TTS_SETTINGS
-            
+
+            # 채널명으로 테스트 텍스트 생성
+            channel_name = session.context.get("selected_channel_name", "채널")
+            test_text = re.sub(
+                r"\s*\([^)]*\)",
+                "",
+                tts_preview_service.get_default_test_text(channel_name),
+            ).strip()
+
+            # TTS 미리듣기 생성 시도
+            audio_data = None
+            try:
+                tts_result_audio = await tts_preview_service.generate_preview(
+                    text=test_text, speaker="Sohee", session_id=session_id
+                )
+                audio_data = {
+                    "audio_base64": tts_result_audio.audio_base64,
+                    "voice_name": tts_result_audio.voice_name,
+                    "duration": tts_result_audio.duration,
+                    "text": tts_result_audio.text,
+                }
+            except TTSError as e:
+                print(f"[Orchestrator] TTS preview failed: {e}")
+            except Exception as e:
+                print(f"[Orchestrator] TTS preview error: {e}")
+
             # TTS 설정 메시지
-            tts_message = """캐릭터가 확정되었습니다! 이제 음성 설정을 해주세요.
+            tts_message = f"""캐릭터가 확정되었습니다! 이제 음성 설정을 해주세요.
+
+**기본 보이스 미리듣기:**
+아래 플레이어로 기본 보이스를 들어보세요!
 
 **음성 옵션을 선택해주세요:**
 
-1️⃣ **기본 보이스 (Sohee)**
+1. **기본 보이스 (Sohee)**
    - 한국어에 최적화된 따뜻한 여성 음성
    - 바로 사용 가능
 
-2️⃣ **보이스 클로닝**
+2. **보이스 클로닝**
    - 원하는 목소리로 복제하여 사용
    - YouTube 영상 또는 저장된 샘플 사용
 
 번호를 입력해주세요. (1 또는 2)"""
-            
-            await self.save_session(session, session_id)
-            return AgentResult(
+
+            self._save(session)
+
+            result_data = {
+                "show_panel": "tts_settings_panel",
+                "type": "selection",
+                "options": [
+                    {"id": 1, "label": "기본 보이스 (Sohee)"},
+                    {"id": 2, "label": "보이스 클로닝"},
+                ],
+            }
+
+            # 오디오 데이터 추가
+            if audio_data:
+                result_data["audio"] = audio_data
+
+            tts_result = AgentResult(
                 success=True,
                 step="tts_settings",
                 message=tts_message,
                 needs_feedback=True,
-                data={"type": "selection", "options": [
-                    {"id": 1, "label": "기본 보이스 (Sohee)"},
-                    {"id": 2, "label": "보이스 클로닝"}
-                ]}
+                data=result_data,
             )
+            return self._format_response(session, tts_result)
 
-            result = await self.planner.execute({
-                'step': 'video_ideas',
-                **session.context
-            })
-
-            if result.data and 'ideas' in result.data:
-                session.context['video_ideas'] = result.data['ideas']
-
-            self._save(session)
-            return self._format_response(session, result)
-
-
-
-        # ========== LOGO 단계 처리 (로고/배너/워터마크) ==========
-        if current_step == WorkflowStep.LOGO:
-            branding_phase = session.context.get('branding_phase', 'ask')
-            
             # 1단계: 브랜딩 타입 선택
-            if branding_phase == 'ask':
+            if branding_phase == "ask":
                 # 초기 메뉴 또는 선택 처리
                 msg_lower = message.lower().strip()
-                
+
                 # 이전 TTS 단계에서 자동 진행된 경우
-                if not session.context.get('branding_menu_shown'):
-                    session.context['branding_menu_shown'] = True
-                    await self.save_session(session, session_id)
-                    
-                    return AgentResult(
+                if not session.context.get("branding_menu_shown"):
+                    session.context["branding_menu_shown"] = True
+                    self._save(session)
+
+                    _tmp_result_395 = AgentResult(
                         success=True,
                         step="logo",
-                        message="""🎨 **채널 브랜딩을 설정해주세요!**
+                        message="""**채널 브랜딩을 설정해주세요!**
 
 생성할 브랜딩 에셋을 선택해주세요:
 
-1️⃣ **로고** (프로필 이미지) - 1024x1024
-2️⃣ **배너** (채널 아트) - 2560x1440  
-3️⃣ **워터마크** (영상 워터마크) - 512x512
-4️⃣ **전체 생성** (로고 + 배너 + 워터마크)
-5️⃣ **건너뛰기** (나중에 생성)
+1. **로고** (프로필 이미지) - 1024x1024
+2. **배너** (채널 아트) - 2560x1440  
+3. **워터마크** (영상 워터마크) - 512x512
+4. **전체 생성** (로고 + 배너 + 워터마크)
+5. **건너뛰기** (나중에 생성)
 
 번호를 입력해주세요.""",
                         needs_feedback=True,
-                        data={"type": "selection", "options": [
-                            {"id": 1, "label": "로고"},
-                            {"id": 2, "label": "배너"},
-                            {"id": 3, "label": "워터마크"},
-                            {"id": 4, "label": "전체 생성"},
-                            {"id": 5, "label": "건너뛰기"}
-                        ]}
+                        data={
+                            "type": "selection",
+                            "options": [
+                                {"id": 1, "label": "로고"},
+                                {"id": 2, "label": "배너"},
+                                {"id": 3, "label": "워터마크"},
+                                {"id": 4, "label": "전체 생성"},
+                                {"id": 5, "label": "건너뛰기"},
+                            ],
+                        },
                     )
-                
+                    return self._format_response(session, _tmp_result_395)
+
                 # 사용자 선택 처리
-                if msg_lower in ['5', '건너뛰기', 'skip']:
+                if msg_lower in ["5", "건너뛰기", "skip"]:
                     session.current_step = WorkflowStep.VIDEO_IDEAS
-                    await self.save_session(session, session_id)
-                    
-                    channel_name = session.context.get('channel_name', '채널')
-                    return AgentResult(
+                    self._save(session)
+
+                    channel_name = session.context.get("channel_name", "채널")
+                    _tmp_result_425 = AgentResult(
                         success=True,
                         step="video_ideas",
                         message=f"""브랜딩 생성을 건너뛰었습니다.
 
 **{channel_name}** 채널 설정이 완료되었습니다!
 
-이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요.""",
-                        needs_feedback=True
+다음 단계로 진행하려면 아무 메시지나 입력해주세요.""",
+                        needs_feedback=True,
                     )
-                
+                    return self._format_response(session, _tmp_result_425)
+
                 # 생성할 타입 결정
                 types_to_generate = []
-                if msg_lower in ['1', '로고', 'logo']:
-                    types_to_generate = ['logo']
-                elif msg_lower in ['2', '배너', 'banner']:
-                    types_to_generate = ['banner']
-                elif msg_lower in ['3', '워터마크', 'watermark']:
-                    types_to_generate = ['watermark']
-                elif msg_lower in ['4', '전체', 'all']:
-                    types_to_generate = ['logo', 'banner', 'watermark']
-                
+                if msg_lower in ["1", "로고", "logo"]:
+                    types_to_generate = ["logo"]
+                elif msg_lower in ["2", "배너", "banner"]:
+                    types_to_generate = ["banner"]
+                elif msg_lower in ["3", "워터마크", "watermark"]:
+                    types_to_generate = ["watermark"]
+                elif msg_lower in ["4", "전체", "all"]:
+                    types_to_generate = ["logo", "banner", "watermark"]
+
                 if types_to_generate:
-                    session.context['branding_queue'] = types_to_generate
-                    session.context['branding_phase'] = 'generating'
-                    session.context['branding_completed'] = []
-                    await self.save_session(session, session_id)
+                    session.context["branding_queue"] = types_to_generate
+                    session.context["branding_phase"] = "generating"
+                    session.context["branding_completed"] = []
+                    self._save(session)
                     # 첫 번째 타입 생성 시작 (아래 generating 로직으로 이동)
                 else:
-                    return AgentResult(
+                    _tmp_result_454 = AgentResult(
                         success=True,
                         step="logo",
                         message="1~5 중 번호를 입력해주세요.",
-                        needs_feedback=True
+                        needs_feedback=True,
                     )
-            
+                    return self._format_response(session, _tmp_result_454)
+
             # 2단계: 생성 중
-            if branding_phase == 'generating' or session.context.get('branding_queue'):
-                queue = session.context.get('branding_queue', [])
-                
+            if branding_phase == "generating" or session.context.get("branding_queue"):
+                queue = session.context.get("branding_queue", [])
+
                 if not queue:
                     # 모든 생성 완료
                     session.current_step = WorkflowStep.VIDEO_IDEAS
-                    session.context['branding_phase'] = 'complete'
-                    await self.save_session(session, session_id)
-                    
-                    channel_name = session.context.get('channel_name', '채널')
-                    completed = session.context.get('branding_completed', [])
-                    completed_str = ', '.join(completed) if completed else '없음'
-                    
-                    return AgentResult(
+                    session.context["branding_phase"] = "complete"
+                    self._save(session)
+
+                    channel_name = session.context.get("channel_name", "채널")
+                    completed = session.context.get("branding_completed", [])
+                    completed_str = ", ".join(completed) if completed else "없음"
+
+                    _tmp_result_475 = AgentResult(
                         success=True,
                         step="video_ideas",
-                        message=f"""✅ **브랜딩 생성 완료!**
+                        message=f"""**브랜딩 생성 완료!**
 
 생성된 에셋: {completed_str}
 
 **{channel_name}** 채널 설정이 모두 완료되었습니다!
 
-이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요.""",
-                        needs_feedback=True
+다음 단계로 진행하려면 아무 메시지나 입력해주세요.""",
+                        needs_feedback=True,
                     )
-                
+                    return self._format_response(session, _tmp_result_475)
+
                 current_type = queue[0]
-                
+
                 # 리뷰 대기 중인지 확인
-                if session.context.get(f'{current_type}_reviewing'):
+                if session.context.get(f"{current_type}_reviewing"):
                     msg_lower = message.lower().strip()
-                    
-                    if '다시' in msg_lower or 'regenerate' in msg_lower:
-                        session.context.pop(f'{current_type}_reviewing', None)
-                        session.context.pop(f'{current_type}_images', None)
+
+                    if "다시" in msg_lower or "regenerate" in msg_lower:
+                        session.context.pop(f"{current_type}_reviewing", None)
+                        session.context.pop(f"{current_type}_images", None)
                         # 재생성 (아래 로직으로 계속)
                     else:
                         try:
                             selection = int(message.strip()) - 1
-                            images = session.context.get(f'{current_type}_images', [])
+                            images = session.context.get(f"{current_type}_images", [])
                             if 0 <= selection < len(images):
                                 # 선택 완료
-                                session.context[f'selected_{current_type}'] = images[selection]
-                                session.context.pop(f'{current_type}_reviewing', None)
-                                session.context.pop(f'{current_type}_images', None)
-                                
-                                completed = session.context.get('branding_completed', [])
+                                session.context[f"selected_{current_type}"] = images[
+                                    selection
+                                ]
+                                session.context.pop(f"{current_type}_reviewing", None)
+                                session.context.pop(f"{current_type}_images", None)
+
+                                completed = session.context.get(
+                                    "branding_completed", []
+                                )
                                 completed.append(current_type)
-                                session.context['branding_completed'] = completed
-                                
+                                session.context["branding_completed"] = completed
+
                                 # 다음 타입으로
-                                session.context['branding_queue'] = queue[1:]
-                                await self.save_session(session, session_id)
-                                
-                                type_names = {'logo': '로고', 'banner': '배너', 'watermark': '워터마크'}
-                                
+                                session.context["branding_queue"] = queue[1:]
+                                self._save(session)
+
+                                type_names = {
+                                    "logo": "로고",
+                                    "banner": "배너",
+                                    "watermark": "워터마크",
+                                }
+
                                 if queue[1:]:
                                     next_type = queue[1]
-                                    return AgentResult(
+                                    _tmp_result_520 = AgentResult(
                                         success=True,
                                         step="logo",
-                                        message=f"✅ {type_names.get(current_type, current_type)} 선택 완료!\n\n다음: {type_names.get(next_type, next_type)} 생성 중...",
+                                        message=f"{type_names.get(current_type, current_type)} 선택 완료!\n\n다음: {type_names.get(next_type, next_type)} 생성 중...",
                                         needs_feedback=False,
-                                        data={"auto_proceed": True}
+                                        data={"auto_proceed": True},
+                                    )
+                                    return self._format_response(
+                                        session, _tmp_result_520
                                     )
                                 else:
                                     # 모든 생성 완료 - 재귀 호출로 완료 처리
                                     pass
                         except ValueError:
                             pass
-                        
-                        images = session.context.get(f'{current_type}_images', [])
-                        return AgentResult(
+
+                        images = session.context.get(f"{current_type}_images", [])
+                        _tmp_result_534 = AgentResult(
                             success=True,
                             step="logo",
                             message=f"숫자를 입력하거나 '다시'를 입력해주세요. (1-{len(images)})",
-                            needs_feedback=True
+                            needs_feedback=True,
                         )
-                
+                        return self._format_response(session, _tmp_result_534)
+
                 # 생성 시작
-                channel_name = session.context.get('channel_name', '')
-                character_info = session.context.get('character_info', {})
-                style = character_info.get('art_style', 'cartoon')
-                category = session.context.get('category', session.context.get('channel_concept', ''))
-                
-                type_names = {'logo': '로고', 'banner': '배너', 'watermark': '워터마크'}
-                
+                channel_name = session.context.get("channel_name", "")
+                character_info = session.context.get("character_info", {})
+                style = character_info.get("art_style", "cartoon")
+                category = session.context.get(
+                    "category", session.context.get("channel_concept", "")
+                )
+
+                type_names = {"logo": "로고", "banner": "배너", "watermark": "워터마크"}
+
                 try:
-                    logo_result = await self.logo_agent.execute({
-                        'channel_name': channel_name,
-                        'character_info': character_info,
-                        'style': style,
-                        'category': category,
-                        'session_id': session_id,
-                        'branding_type': current_type
-                    })
-                    
+                    logo_result = await self.logo_agent.execute(
+                        {
+                            "channel_name": channel_name,
+                            "character_info": character_info,
+                            "style": style,
+                            "category": category,
+                            "session_id": session_id,
+                            "branding_type": current_type,
+                        }
+                    )
+
                     if logo_result.success and logo_result.data:
-                        images = logo_result.data.get('images', [])
-                        session.context[f'{current_type}_images'] = images
-                        session.context[f'{current_type}_reviewing'] = True
-                        await self.save_session(session, session_id)
-                        
-                        return AgentResult(
+                        images = logo_result.data.get("images", [])
+                        session.context[f"{current_type}_images"] = images
+                        session.context[f"{current_type}_reviewing"] = True
+                        self._save(session)
+
+                        _tmp_result_565 = AgentResult(
                             success=True,
                             step="logo",
-                            message=f"""✅ **{type_names.get(current_type, current_type)} {len(images)}개 생성 완료!**
+                            message=f"""**{type_names.get(current_type, current_type)} {len(images)}개 생성 완료!**
 
 마음에 드는 것을 선택해주세요.
 - 숫자 입력: 해당 이미지 선택
@@ -585,228 +1103,551 @@ class Orchestrator:
                             data={
                                 "type": "branding_selection",
                                 "branding_type": current_type,
-                                "images": images
-                            }
+                                "images": images,
+                            },
                         )
+                        return self._format_response(session, _tmp_result_565)
                     else:
                         raise Exception(logo_result.message)
-                    
+
                 except Exception as e:
                     # 실패 시 스킵하고 다음으로
-                    session.context['branding_queue'] = queue[1:]
-                    await self.save_session(session, session_id)
-                    
-                    return AgentResult(
+                    session.context["branding_queue"] = queue[1:]
+                    self._save(session)
+
+                    _tmp_result_588 = AgentResult(
                         success=True,
                         step="logo",
                         message=f"{type_names.get(current_type, current_type)} 생성 실패: {str(e)}\n다음으로 진행합니다...",
                         needs_feedback=False,
-                        data={"auto_proceed": True}
+                        data={"auto_proceed": True},
                     )
-
+                    return self._format_response(session, _tmp_result_588)
 
         # ========== TTS_SETTINGS 단계 처리 ==========
         if current_step == WorkflowStep.TTS_SETTINGS:
+            # 옵션이 아직 표시되지 않은 경우 먼저 표시
+            if not session.context.get("tts_options_shown"):
+                session.context["tts_options_shown"] = True
+                self._save(session)
+
+                # 채널명으로 테스트 텍스트 생성
+                channel_name = session.context.get("selected_channel_name", "채널")
+                test_text = re.sub(
+                    r"\s*\([^)]*\)",
+                    "",
+                    tts_preview_service.get_default_test_text(channel_name),
+                ).strip()
+
+                # TTS 미리듣기 생성 시도
+                audio_data = None
+                try:
+                    tts_result_audio = await tts_preview_service.generate_preview(
+                        text=test_text, speaker="Sohee", session_id=session_id
+                    )
+                    audio_data = {
+                        "audio_base64": tts_result_audio.audio_base64,
+                        "voice_name": tts_result_audio.voice_name,
+                        "duration": tts_result_audio.duration,
+                        "text": tts_result_audio.text,
+                    }
+                except Exception as e:
+                    print(f"[Orchestrator] TTS preview error: {e}")
+
+                tts_message = """**음성 옵션을 선택해주세요:**
+
+아래 플레이어로 기본 보이스를 미리 들어보세요!
+
+1. **기본 보이스 (Sohee)**
+   - 한국어에 최적화된 따뜻한 여성 음성
+   - 바로 사용 가능
+
+2. **보이스 클로닝**
+   - 원하는 목소리로 복제하여 사용
+   - YouTube 영상 또는 저장된 샘플 사용
+
+번호를 입력해주세요. (1 또는 2)"""
+
+                result_data = {
+                    "show_panel": "tts_settings_panel",
+                    "type": "selection",
+                    "options": [
+                        {"id": 1, "label": "기본 보이스 (Sohee)"},
+                        {"id": 2, "label": "보이스 클로닝"},
+                    ],
+                }
+                if audio_data:
+                    result_data["audio"] = audio_data
+
+                tts_result = AgentResult(
+                    success=True,
+                    step="tts_settings",
+                    message=tts_message,
+                    needs_feedback=True,
+                    data=result_data,
+                )
+                return self._format_response(session, tts_result)
+
             msg_lower = message.lower().strip()
-            
+
+            # JSON 형식 TTS 설정 처리 (모달에서 확정)
+            if message.strip().startswith("{"):
+                try:
+                    tts_settings = json.loads(message.strip())
+                    tts_type = tts_settings.get("type", "")
+
+                    if tts_type == "default":
+                        session.context["tts_voice_option"] = "default"
+                        session.context["tts_speaker"] = "Sohee"
+                        session.context["tts_speed"] = tts_settings.get("speed", 1.0)
+                        session.context["tts_pitch"] = tts_settings.get("pitch", 0)
+                        session.context["tts_instruct"] = tts_settings.get(
+                            "instruct", ""
+                        )
+                        session.context["tts_text"] = tts_settings.get("text", "")
+
+                    elif tts_type == "clone_sample":
+                        session.context["tts_voice_option"] = "clone"
+                        session.context["tts_clone_mode"] = "sample"
+                        session.context["tts_sample_id"] = tts_settings.get(
+                            "sampleId", ""
+                        )
+                        session.context["tts_sample_ref_text"] = tts_settings.get(
+                            "sampleRefText", ""
+                        )
+                        session.context["tts_text"] = tts_settings.get("text", "")
+
+                    elif tts_type == "clone_youtube":
+                        session.context["tts_voice_option"] = "clone"
+                        session.context["tts_clone_mode"] = "youtube"
+                        session.context["tts_youtube_url"] = tts_settings.get(
+                            "youtubeUrl", ""
+                        )
+                        session.context["tts_youtube_time"] = tts_settings.get(
+                            "timeRange", ""
+                        )
+                        session.context["tts_text"] = tts_settings.get("text", "")
+
+                    session.current_step = WorkflowStep.LOGO
+                    self._save(session)
+
+                    voice_desc = (
+                        "기본 보이스 (Sohee)"
+                        if tts_type == "default"
+                        else f"보이스 클로닝 ({tts_type.replace('clone_', '')})"
+                    )
+
+                    return self._format_response(
+                        session,
+                        AgentResult(
+                            success=True,
+                            step="tts_confirmed",
+                            message=f"**{voice_desc}**로 음성 설정이 완료되었습니다!\n\n다음 단계로 진행합니다.",
+                            needs_feedback=False,
+                            data={"auto_next": True, "next_step": "logo"},
+                        ),
+                    )
+                except json.JSONDecodeError:
+                    pass
+
             # 클로닝 모드 진입
-            if session.context.get('tts_clone_mode'):
-                clone_mode = session.context.get('tts_clone_mode')
-                
+            if session.context.get("tts_clone_mode"):
+                clone_mode = session.context.get("tts_clone_mode")
+
                 # YouTube URL 입력 대기 중
-                if clone_mode == 'youtube' and not session.context.get('tts_youtube_url'):
-                    if 'youtube.com' in message or 'youtu.be' in message:
-                        session.context['tts_youtube_url'] = message.strip()
-                        await self.save_session(session, session_id)
-                        return AgentResult(
+                if clone_mode == "youtube" and not session.context.get(
+                    "tts_youtube_url"
+                ):
+                    if "youtube.com" in message or "youtu.be" in message:
+                        session.context["tts_youtube_url"] = message.strip()
+                        self._save(session)
+                        _tmp_result_610 = AgentResult(
                             success=True,
                             step="tts_settings",
                             message="YouTube URL이 저장되었습니다. 음성을 추출할 시간대를 입력해주세요.\n예: 0:30-0:45 (30초~45초 구간)",
-                            needs_feedback=True
+                            needs_feedback=True,
                         )
+                        return self._format_response(session, _tmp_result_610)
                     else:
-                        return AgentResult(
+                        _tmp_result_617 = AgentResult(
                             success=True,
                             step="tts_settings",
                             message="올바른 YouTube URL을 입력해주세요.\n예: https://youtube.com/watch?v=...",
-                            needs_feedback=True
+                            needs_feedback=True,
                         )
-                
-                # YouTube 시간대 입력 대기 중
-                if clone_mode == 'youtube' and session.context.get('tts_youtube_url') and not session.context.get('tts_youtube_time'):
-                    session.context['tts_youtube_time'] = message.strip()
-                    session.context['tts_voice_option'] = 'youtube'
-                    session.current_step = WorkflowStep.LOGO
-                    await self.save_session(session, session_id)
-                    
-                    channel_name = session.context.get('channel_name', '채널')
-                    complete_msg = f"""음성 설정이 완료되었습니다!
-- 방식: YouTube 보이스 클로닝
-- URL: {session.context.get('tts_youtube_url')}
-- 구간: {message.strip()}
+                        return self._format_response(session, _tmp_result_617)
 
-**{channel_name}** 채널 설정이 완료되었습니다!
+                # YouTube 시간대 입력 대기 중 -> 오디오 추출
+                if (
+                    clone_mode == "youtube"
+                    and session.context.get("tts_youtube_url")
+                    and not session.context.get("tts_youtube_time")
+                ):
+                    time_range = message.strip()
+                    youtube_url = session.context.get("tts_youtube_url")
 
-이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요."""
-                    return AgentResult(
-                        success=True,
-                        step="logo",
-                        message=complete_msg,
-                        needs_feedback=True,
-                        data={"auto_proceed": True}
+                    # 시간 파싱 (0:30-0:45 또는 30-45 형식)
+                    try:
+                        if "-" in time_range:
+                            start_str, end_str = time_range.split("-")
+                            start_str = start_str.strip()
+                            end_str = end_str.strip()
+                        else:
+                            return self._format_response(
+                                session,
+                                AgentResult(
+                                    success=True,
+                                    step="tts_settings",
+                                    message="시간 형식이 올바르지 않습니다. '시작-끝' 형식으로 입력해주세요.\n예: 0:30-0:45",
+                                    needs_feedback=True,
+                                ),
+                            )
+                    except:
+                        return self._format_response(
+                            session,
+                            AgentResult(
+                                success=True,
+                                step="tts_settings",
+                                message="시간 형식이 올바르지 않습니다. '시작-끝' 형식으로 입력해주세요.\n예: 0:30-0:45",
+                                needs_feedback=True,
+                            ),
+                        )
+
+                    # YouTube 오디오 추출 시도
+                    extract_result = None
+                    extract_error = None
+                    try:
+                        extract_result = (
+                            await tts_preview_service.extract_youtube_audio(
+                                url=youtube_url,
+                                start_time=start_str,
+                                end_time=end_str,
+                                session_id=session_id,
+                            )
+                        )
+                    except TTSError as e:
+                        extract_error = e.user_message
+                    except Exception as e:
+                        extract_error = f"오디오 추출 중 오류가 발생했습니다: {str(e)}"
+
+                    if extract_error:
+                        return self._format_response(
+                            session,
+                            AgentResult(
+                                success=True,
+                                step="tts_settings",
+                                message=f"{extract_error}\n\n다른 시간대를 입력하거나, YouTube URL을 다시 입력하려면 URL을 입력해주세요.",
+                                needs_feedback=True,
+                            ),
+                        )
+
+                    # 추출 성공 - 확인 요청
+                    session.context["tts_youtube_time"] = time_range
+                    session.context["tts_extracted_audio"] = extract_result.get(
+                        "audio_base64"
                     )
-                
+                    session.context["tts_extracted_ref_text"] = extract_result.get(
+                        "ref_text", ""
+                    )
+                    session.context["tts_awaiting_confirm"] = True
+                    self._save(session)
+
+                    duration = extract_result.get("duration", 0)
+                    quality = extract_result.get("quality_score", 0)
+                    ref_text = extract_result.get("ref_text", "")
+
+                    preview_msg = f"""**오디오 추출 완료!**
+
+- 구간: {time_range}
+- 길이: {duration:.1f}초
+- 품질: {quality:.0%}
+{f"- 감지된 텍스트: {ref_text[:50]}..." if ref_text else ""}
+
+아래 플레이어로 추출된 음성을 확인하세요.
+
+**이 음성을 사용하시겠습니까?**
+1. 확인 (이 음성 사용)
+2. 다시 추출 (다른 구간 선택)"""
+
+                    return self._format_response(
+                        session,
+                        AgentResult(
+                            success=True,
+                            step="tts_settings",
+                            message=preview_msg,
+                            needs_feedback=True,
+                            data={
+                                "type": "audio_confirm",
+                                "audio": {
+                                    "audio_base64": extract_result.get("audio_base64"),
+                                    "duration": duration,
+                                },
+                                "options": [
+                                    {"id": 1, "label": "확인"},
+                                    {"id": 2, "label": "다시 추출"},
+                                ],
+                            },
+                        ),
+                    )
+
+                # YouTube 오디오 확인 대기 중
+                if (
+                    clone_mode == "youtube"
+                    and session.context.get("tts_youtube_time")
+                    and session.context.get("tts_awaiting_confirm")
+                ):
+                    if msg_lower in ["1", "확인", "ok", "yes", "네"]:
+                        session.context["tts_voice_option"] = "youtube"
+                        session.context.pop("tts_awaiting_confirm", None)
+                        session.current_step = WorkflowStep.LOGO
+                        self._save(session)
+
+                        channel_name = session.context.get(
+                            "selected_channel_name", "채널"
+                        )
+                        complete_msg = f"""음성 설정이 완료되었습니다!
+
+- 방식: YouTube 보이스 클로닝
+- URL: {session.context.get("tts_youtube_url")}
+- 구간: {session.context.get("tts_youtube_time")}
+
+다음은 **브랜딩** 단계입니다. 아무 메시지나 입력해주세요."""
+
+                        return self._format_response(
+                            session,
+                            AgentResult(
+                                success=True,
+                                step="logo",
+                                message=complete_msg,
+                                needs_feedback=True,
+                            ),
+                        )
+                    elif msg_lower in ["2", "다시", "재시도", "retry"]:
+                        session.context.pop("tts_youtube_time", None)
+                        session.context.pop("tts_extracted_audio", None)
+                        session.context.pop("tts_awaiting_confirm", None)
+                        self._save(session)
+
+                        return self._format_response(
+                            session,
+                            AgentResult(
+                                success=True,
+                                step="tts_settings",
+                                message="다시 시간대를 입력해주세요.\n예: 0:30-0:45 (30초~45초 구간)",
+                                needs_feedback=True,
+                            ),
+                        )
+                    else:
+                        return self._format_response(
+                            session,
+                            AgentResult(
+                                success=True,
+                                step="tts_settings",
+                                message="1(확인) 또는 2(다시 추출)를 입력해주세요.",
+                                needs_feedback=True,
+                            ),
+                        )
+
                 # 샘플 선택 대기 중
-                if clone_mode == 'sample':
+                if clone_mode == "sample":
                     try:
                         sample_idx = int(message.strip()) - 1
-                        session.context['tts_sample_idx'] = sample_idx
-                        session.context['tts_voice_option'] = 'sample'
+                        session.context["tts_sample_idx"] = sample_idx
+                        session.context["tts_voice_option"] = "sample"
                         session.current_step = WorkflowStep.LOGO
-                        await self.save_session(session, session_id)
-                        
-                        channel_name = session.context.get('channel_name', '채널')
+                        self._save(session)
+
+                        channel_name = session.context.get("channel_name", "채널")
                         complete_msg = f"""음성 설정이 완료되었습니다!
 - 방식: 저장된 샘플 사용
 
 **{channel_name}** 채널 설정이 완료되었습니다!
 
-이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요."""
-                        return AgentResult(
+다음 단계로 진행하려면 아무 메시지나 입력해주세요."""
+                        _tmp_result_664 = AgentResult(
                             success=True,
                             step="logo",
                             message=complete_msg,
-                            needs_feedback=True
+                            needs_feedback=True,
                         )
+                        return self._format_response(session, _tmp_result_664)
                     except:
-                        return AgentResult(
+                        _tmp_result_671 = AgentResult(
                             success=True,
                             step="tts_settings",
                             message="올바른 번호를 입력해주세요.",
-                            needs_feedback=True
+                            needs_feedback=True,
                         )
-            
+                        return self._format_response(session, _tmp_result_671)
+
             # 1번 선택: 기본 보이스
-            if msg_lower in ['1', '기본', 'default', 'sohee']:
-                session.context['tts_voice_option'] = 'default'
-                session.context['tts_speaker'] = 'Sohee'
+            if msg_lower in ["1", "기본", "default", "sohee"]:
+                session.context["tts_voice_option"] = "default"
+                session.context["tts_speaker"] = "Sohee"
                 session.current_step = WorkflowStep.LOGO
-                await self.save_session(session, session_id)
-                
-                channel_name = session.context.get('channel_name', '채널')
+                self._save(session)
+
+                channel_name = session.context.get("channel_name", "채널")
                 complete_msg = f"""음성 설정이 완료되었습니다!
 - 음성: 기본 보이스 (Sohee)
 
 **{channel_name}** 채널 설정이 완료되었습니다!
 
-이제 어떤 주제의 영상을 만들까요? 주제나 아이디어를 입력해주세요."""
-                return AgentResult(
+다음 단계로 진행하려면 아무 메시지나 입력해주세요."""
+                _tmp_result_692 = AgentResult(
                     success=True,
                     step="video_ideas",
                     message=complete_msg,
-                    needs_feedback=True
+                    needs_feedback=True,
                 )
-            
+                return self._format_response(session, _tmp_result_692)
+
             # 2번 선택: 보이스 클로닝
-            if msg_lower in ['2', '클로닝', 'clone', 'cloning']:
+            if msg_lower in ["2", "클로닝", "clone", "cloning"]:
                 clone_msg = """**보이스 클로닝 방식을 선택해주세요:**
 
-1️⃣ **YouTube 영상에서 추출**
+1. **YouTube 영상에서 추출**
    - 원하는 유튜버의 목소리 복제
    - URL과 시간대 입력 필요
 
-2️⃣ **저장된 샘플 사용**
+2. **저장된 샘플 사용**
    - 미리 준비된 음성 샘플 선택
 
 번호를 입력해주세요. (1 또는 2)"""
-                return AgentResult(
+                _tmp_result_711 = AgentResult(
                     success=True,
                     step="tts_settings",
                     message=clone_msg,
                     needs_feedback=True,
-                    data={"type": "selection", "options": [
-                        {"id": 1, "label": "YouTube에서 추출"},
-                        {"id": 2, "label": "저장된 샘플"}
-                    ]}
+                    data={
+                        "type": "selection",
+                        "options": [
+                            {"id": 1, "label": "YouTube에서 추출"},
+                            {"id": 2, "label": "저장된 샘플"},
+                        ],
+                    },
                 )
-            
+                return self._format_response(session, _tmp_result_711)
+
             # 클로닝 하위 옵션
-            if session.context.get('tts_voice_option') is None:
-                if msg_lower == '1' or 'youtube' in msg_lower or 'yt' in msg_lower:
-                    session.context['tts_clone_mode'] = 'youtube'
-                    await self.save_session(session, session_id)
-                    return AgentResult(
+            if session.context.get("tts_voice_option") is None:
+                if msg_lower == "1" or "youtube" in msg_lower or "yt" in msg_lower:
+                    session.context["tts_clone_mode"] = "youtube"
+                    self._save(session)
+                    _tmp_result_727 = AgentResult(
                         success=True,
                         step="tts_settings",
                         message="복제할 목소리가 있는 YouTube 영상 URL을 입력해주세요.\n예: https://youtube.com/watch?v=...",
-                        needs_feedback=True
+                        needs_feedback=True,
                     )
-                elif msg_lower == '2' or '샘플' in msg_lower or 'sample' in msg_lower:
-                    session.context['tts_clone_mode'] = 'sample'
-                    await self.save_session(session, session_id)
-                    return AgentResult(
-                        success=True,
-                        step="tts_settings",
-                        message="저장된 샘플 목록:\n(샘플 기능은 아직 준비 중입니다. 기본 보이스를 사용하려면 '1'을 입력해주세요.)",
-                        needs_feedback=True
+                    return self._format_response(session, _tmp_result_727)
+                elif msg_lower == "2" or "샘플" in msg_lower or "sample" in msg_lower:
+                    session.context["tts_clone_mode"] = "sample"
+
+                    samples_data = tts_preview_service.get_voice_samples(
+                        page=1, per_page=10
                     )
-            
+                    samples = samples_data.get("samples", [])
+                    total = samples_data.get("total", 0)
+
+                    if not samples:
+                        self._save(session)
+                        return self._format_response(
+                            session,
+                            AgentResult(
+                                success=True,
+                                step="tts_settings",
+                                message="저장된 샘플이 없습니다. 기본 보이스를 사용하려면 '1'을 입력해주세요.",
+                                needs_feedback=True,
+                            ),
+                        )
+
+                    sample_list = f"**저장된 음성 샘플** (총 {total}개)\n\n번호를 입력하여 샘플을 선택하세요:\n\n"
+                    options = []
+                    for i, sample in enumerate(samples):
+                        prompt = sample.get("prompt_text", "")[:40]
+                        if len(sample.get("prompt_text", "")) > 40:
+                            prompt += "..."
+                        sample_list += f"{i + 1}. {prompt}\n"
+                        options.append(
+                            {
+                                "id": i + 1,
+                                "label": prompt,
+                                "voice_id": sample.get("voice_id"),
+                            }
+                        )
+
+                    session.context["tts_sample_options"] = options
+                    self._save(session)
+
+                    return self._format_response(
+                        session,
+                        AgentResult(
+                            success=True,
+                            step="tts_settings",
+                            message=sample_list,
+                            needs_feedback=True,
+                            data={"type": "sample_selection", "options": options},
+                        ),
+                    )
+
             # 잘못된 입력
-            return AgentResult(
+            _tmp_result_744 = AgentResult(
                 success=True,
                 step="tts_settings",
                 message="1 또는 2를 입력해주세요.",
-                needs_feedback=True
+                needs_feedback=True,
             )
+            return self._format_response(session, _tmp_result_744)
 
         # ========== VIDEO_IDEAS 단계에서 새 주제 입력 처리 ==========
         if current_step == WorkflowStep.VIDEO_IDEAS:
             num = self._extract_number(message)
             if num is not None:
-                ideas = session.context.get('video_ideas', [])
+                ideas = session.context.get("video_ideas", [])
                 if 0 < num <= len(ideas):
-                    session.context['selected_video_idea'] = ideas[num - 1]
-                    self.planner.set_context('selected_video_idea', ideas[num - 1])
+                    session.context["selected_video_idea"] = ideas[num - 1]
+                    self.planner.set_context("selected_video_idea", ideas[num - 1])
 
                     session.current_step = WorkflowStep.SCRIPT
-                    result = await self.planner.execute({
-                        'step': 'script',
-                        **session.context
-                    })
+                    result = await self.planner.execute(
+                        {"step": "script", **session.context}
+                    )
 
-                    if result.data and 'script' in result.data:
-                        session.context['script'] = result.data['script']
+                    if result.data and "script" in result.data:
+                        session.context["script"] = result.data["script"]
 
                     self._save(session)
                     return self._format_response(session, result)
 
             if self._is_confirmation(message):
-                ideas = session.context.get('video_ideas', [])
+                ideas = session.context.get("video_ideas", [])
                 if ideas:
-                    session.context['selected_video_idea'] = ideas[0]
-                    self.planner.set_context('selected_video_idea', ideas[0])
+                    session.context["selected_video_idea"] = ideas[0]
+                    self.planner.set_context("selected_video_idea", ideas[0])
 
                     session.current_step = WorkflowStep.SCRIPT
-                    result = await self.planner.execute({
-                        'step': 'script',
-                        **session.context
-                    })
+                    result = await self.planner.execute(
+                        {"step": "script", **session.context}
+                    )
 
-                    if result.data and 'script' in result.data:
-                        session.context['script'] = result.data['script']
+                    if result.data and "script" in result.data:
+                        session.context["script"] = result.data["script"]
 
                     self._save(session)
                     return self._format_response(session, result)
 
-            if len(message) > 5 and not self._is_confirmation(message) and not self._is_selection(message):
-                result = await self.planner.execute({
-                    'step': 'video_ideas',
-                    'user_topic': message,
-                    **session.context
-                })
+            if (
+                len(message) > 5
+                and not self._is_confirmation(message)
+                and not self._is_selection(message)
+            ):
+                result = await self.planner.execute(
+                    {"step": "video_ideas", "user_topic": message, **session.context}
+                )
 
-                if result.data and 'ideas' in result.data:
-                    session.context['video_ideas'] = result.data['ideas']
+                if result.data and "ideas" in result.data:
+                    session.context["video_ideas"] = result.data["ideas"]
 
                 self._save(session)
                 return self._format_response(session, result)
@@ -814,31 +1655,49 @@ class Orchestrator:
         # ========== CHANNEL_NAME 단계: planner agent로 위임 (설문 처리) ==========
         if current_step == WorkflowStep.CHANNEL_NAME:
             # 채널명이 이미 선택되었고 "확인" 입력 시 다음 단계로
-            if session.context.get('selected_channel_name') and self._is_confirmation(message):
+            if session.context.get("selected_channel_name") and self._is_confirmation(
+                message
+            ):
                 session.current_step = WorkflowStep.BENCHMARKING
-                benchmarker = self._get_current_agent(WorkflowStep.BENCHMARKING, session_id)
-                bench_result = await benchmarker.execute({
-                    'step': 'benchmarking',
-                    **session.context
-                })
+                benchmarker = self._get_current_agent(
+                    WorkflowStep.BENCHMARKING, session_id
+                )
+                bench_result = await benchmarker.execute(
+                    {"step": "benchmarking", **session.context}
+                )
                 self._save(session)
                 return self._format_response(session, bench_result)
 
             result = await self.planner.handle_feedback(message, images)
 
+            # planner context를 세션에 동기화
+            for key in ["survey_step", "user_request", "channel_names"]:
+                val = self.planner.get_context(key)
+                if val:
+                    session.context[key] = val
+
             # 채널명 확정 시 context에 저장
-            if result.step == 'channel_name_confirmed' and result.data and result.data.get('selected_channel_name'):
-                session.context['selected_channel_name'] = result.data['selected_channel_name']
-                self.planner.set_context('selected_channel_name', result.data['selected_channel_name'])
+            if (
+                result.step == "channel_name_confirmed"
+                and result.data
+                and result.data.get("selected_channel_name")
+            ):
+                session.context["selected_channel_name"] = result.data[
+                    "selected_channel_name"
+                ]
+                self.planner.set_context(
+                    "selected_channel_name", result.data["selected_channel_name"]
+                )
 
                 # needs_feedback가 False면 바로 다음 단계로
                 if not result.needs_feedback:
                     session.current_step = WorkflowStep.BENCHMARKING
-                    benchmarker = self._get_current_agent(WorkflowStep.BENCHMARKING, session_id)
-                    bench_result = await benchmarker.execute({
-                        'step': 'benchmarking',
-                        **session.context
-                    })
+                    benchmarker = self._get_current_agent(
+                        WorkflowStep.BENCHMARKING, session_id
+                    )
+                    bench_result = await benchmarker.execute(
+                        {"step": "benchmarking", **session.context}
+                    )
                     self._save(session)
                     return self._format_response(session, bench_result)
 
@@ -846,7 +1705,12 @@ class Orchestrator:
             return self._format_response(session, result)
 
         # ========== 숫자 선택 처리 (BENCHMARKING, CHANNEL_NAME 제외) ==========
-        if current_step not in [WorkflowStep.BENCHMARKING, WorkflowStep.CHANNEL_NAME]:
+        if current_step not in [
+            WorkflowStep.BENCHMARKING,
+            WorkflowStep.CHANNEL_NAME,
+            WorkflowStep.TTS_SETTINGS,
+            WorkflowStep.LOGO,
+        ]:
             num = self._extract_number(message)
             if num is not None:
                 result = await self._handle_selection(session, num)
@@ -854,91 +1718,118 @@ class Orchestrator:
                 return self._format_response(session, result)
 
         # ========== 확정 처리 (BENCHMARKING, CHANNEL_NAME 제외) ==========
-        if current_step not in [WorkflowStep.BENCHMARKING, WorkflowStep.CHANNEL_NAME] and self._is_confirmation(message):
+        if current_step not in [
+            WorkflowStep.BENCHMARKING,
+            WorkflowStep.CHANNEL_NAME,
+            WorkflowStep.TTS_SETTINGS,
+            WorkflowStep.LOGO,
+        ] and self._is_confirmation(message):
             result = await self._handle_next_step(session)
             self._save(session)
             return self._format_response(session, result)
 
         # ========== BENCHMARKING 완료 후 "다음" 입력 시 먼저 처리 (버그 수정) ==========
-        if current_step == WorkflowStep.BENCHMARKING and session.context.get("benchmark_shown"):
+        if current_step == WorkflowStep.BENCHMARKING and session.context.get(
+            "benchmark_shown"
+        ):
             if self._is_confirmation(message):
                 session.current_step = WorkflowStep.CHARACTER
-                char_result = await self.character_agent.execute({
-                    "step": "character",
-                    **session.context
-                })
+                char_result = await self.character_agent.execute(
+                    {"step": "character", **session.context}
+                )
                 self._save(session)
                 return self._format_response(session, char_result)
 
         # ========== 기본 피드백 처리 ==========
         agent = self._get_current_agent(current_step, session_id)
+
+        # TTS_SETTINGS, LOGO는 orchestrator가 직접 처리 - 에이전트 없음
+        if agent is None:
+            # 이 단계들은 위에서 이미 처리되어야 함
+            error_result = AgentResult(
+                success=True,
+                step=current_step.value,
+                message="현재 단계에서 예상치 못한 입력입니다. 올바른 옵션을 선택해주세요.",
+                needs_feedback=True,
+            )
+            return self._format_response(session, error_result)
+
         result = await agent.handle_feedback(message, images)
 
         # 벤치마킹 완료 처리
         if current_step == WorkflowStep.BENCHMARKING:
             # 다시 분석 요청 시 benchmark_shown 초기화
-            if result.step in ['benchmark_confirm', 'benchmark_collect']:
-                session.context.pop('benchmark_shown', None)
-                session.context.pop('benchmark_report', None)
+            if result.step in ["benchmark_confirm", "benchmark_collect"]:
+                session.context.pop("benchmark_shown", None)
+                session.context.pop("benchmark_report", None)
 
             if result.data:
-                if result.data.get('skipped'):
+                if result.data.get("skipped"):
                     session.current_step = WorkflowStep.CHARACTER
-                    char_result = await self.character_agent.execute({
-                        'step': 'character',
-                        **session.context
-                    })
+                    char_result = await self.character_agent.execute(
+                        {"step": "character", **session.context}
+                    )
                     self._save(session)
                     return self._format_response(session, char_result)
 
-                if result.data.get('report') and not result.needs_feedback:
-                    session.context['benchmark_report'] = result.data['report']
-                    session.context['benchmark_shown'] = True
-                    result.message = result.message + "\n\n---\n\n**리포트 확인 완료!**\n다음 단계로 진행하려면 확인 또는 다음을 입력하세요."
+                if result.data.get("report") and not result.needs_feedback:
+                    session.context["benchmark_report"] = result.data["report"]
+                    session.context["benchmark_shown"] = True
+                    result.message = (
+                        result.message
+                        + "\n\n---\n\n**리포트 확인 완료!**\n다음 단계로 진행하려면 확인 또는 다음을 입력하세요."
+                    )
                     result.needs_feedback = True
                     self._save(session)
                     return self._format_response(session, result)
 
                 # 벤치마킹 완료 후 "다음/확인" 입력 시 캐릭터로 진행
-                if session.context.get('benchmark_shown'):
+                if session.context.get("benchmark_shown"):
                     # 사용자가 "다음" 또는 "확인"을 입력한 경우
-                    if self._is_confirmation(message) or result.step == 'benchmark_complete':
+                    if (
+                        self._is_confirmation(message)
+                        or result.step == "benchmark_complete"
+                    ):
                         session.current_step = WorkflowStep.CHARACTER
-                        char_result = await self.character_agent.execute({
-                            'step': 'character',
-                            **session.context
-                        })
+                        char_result = await self.character_agent.execute(
+                            {"step": "character", **session.context}
+                        )
                         self._save(session)
                         return self._format_response(session, char_result)
 
         # ========== CHARACTER 단계에서 character_confirmed 처리 ==========
-        if current_step == WorkflowStep.CHARACTER and result.step == 'character_confirmed':
+        if (
+            current_step == WorkflowStep.CHARACTER
+            and result.step == "character_confirmed"
+        ):
             # 스토리텔링 포맷 적용
-            char_info = result.data.get('character_analysis', {}) if result.data else {}
+            char_info = result.data.get("character_analysis", {}) if result.data else {}
             if char_info:
                 try:
-                    char_intro = await self._format_character_intro(char_info, session.context)
+                    char_intro = await self._format_character_intro(
+                        char_info, session.context
+                    )
                     if char_intro:
                         result.message = char_intro
-                        session.context['character_info'] = char_info
+                        session.context["character_info"] = char_info
                 except Exception as e:
-                    print(f'[Orchestrator] Character intro formatting failed: {e}')
+                    print(f"[Orchestrator] Character intro formatting failed: {e}")
 
         # IMAGE_GENERATE 완료 후 데이터 저장
         if current_step == WorkflowStep.IMAGE_GENERATE:
             if result.data:
-                if result.data.get('images'):
-                    session.context['generated_images'] = result.data['images']
-                if result.data.get('videos'):
-                    session.context['generated_videos'] = result.data['videos']
-                if result.data.get('qc_results'):
-                    session.context['qc_results'] = result.data['qc_results']
+                if result.data.get("images"):
+                    session.context["generated_images"] = result.data["images"]
+                if result.data.get("videos"):
+                    session.context["generated_videos"] = result.data["videos"]
+                if result.data.get("qc_results"):
+                    session.context["qc_results"] = result.data["qc_results"]
 
         # VOICEOVER 완료 후 데이터 저장
         if current_step == WorkflowStep.VOICEOVER:
             if result.data:
-                if result.data.get('sections'):
-                    session.context['voice_sections'] = result.data['sections']
+                if result.data.get("sections"):
+                    session.context["voice_sections"] = result.data["sections"]
 
         self._save(session)
         return self._format_response(session, result)
@@ -947,16 +1838,16 @@ class Orchestrator:
         current_step = session.current_step
 
         if current_step == WorkflowStep.CHANNEL_NAME:
-            names = session.context.get('channel_names', [])
+            names = session.context.get("channel_names", [])
             if 0 < num <= len(names):
-                session.context['selected_channel_name'] = names[num - 1]
-                self.planner.set_context('selected_channel_name', names[num - 1])
+                session.context["selected_channel_name"] = names[num - 1]
+                self.planner.set_context("selected_channel_name", names[num - 1])
 
         elif current_step == WorkflowStep.VIDEO_IDEAS:
-            ideas = session.context.get('video_ideas', [])
+            ideas = session.context.get("video_ideas", [])
             if 0 < num <= len(ideas):
-                session.context['selected_video_idea'] = ideas[num - 1]
-                self.planner.set_context('selected_video_idea', ideas[num - 1])
+                session.context["selected_video_idea"] = ideas[num - 1]
+                self.planner.set_context("selected_video_idea", ideas[num - 1])
 
         return await self._handle_next_step(session)
 
@@ -976,44 +1867,48 @@ class Orchestrator:
 
         # 각 에이전트에 필요한 데이터 전달
         input_data = {
-            'step': session.current_step.value,
-            'session_id': session.id,
-            **session.context
+            "step": session.current_step.value,
+            "session_id": session.id,
+            **session.context,
         }
 
         # IMAGE_GENERATE 에이전트에 프롬프트 전달
         if session.current_step == WorkflowStep.IMAGE_GENERATE:
-            input_data['prompts'] = session.context.get('image_prompts', {}).get('prompts', [])
-            input_data['generate_videos'] = True
-            input_data['enable_qc'] = True
+            input_data["prompts"] = session.context.get("image_prompts", {}).get(
+                "prompts", []
+            )
+            input_data["generate_videos"] = True
+            input_data["enable_qc"] = True
 
         # COMPOSE 에이전트에 비디오/오디오 데이터 전달
         if session.current_step == WorkflowStep.COMPOSE:
-            input_data['videos'] = session.context.get('generated_videos', [])
-            input_data['audios'] = session.context.get('voice_sections', [])
-            input_data['prompts'] = session.context.get('image_prompts', {}).get('prompts', [])
+            input_data["videos"] = session.context.get("generated_videos", [])
+            input_data["audios"] = session.context.get("voice_sections", [])
+            input_data["prompts"] = session.context.get("image_prompts", {}).get(
+                "prompts", []
+            )
 
         result = await agent.execute(input_data)
 
         if result.data:
-            if 'ideas' in result.data:
-                session.context['video_ideas'] = result.data['ideas']
-            if 'script' in result.data:
-                session.context['script'] = result.data['script']
-            if 'prompts' in result.data:
-                session.context['image_prompts'] = result.data
-            if 'images' in result.data:
-                session.context['generated_images'] = result.data['images']
-            if 'videos' in result.data:
-                session.context['generated_videos'] = result.data['videos']
-            if 'report' in result.data:
-                session.context['benchmark_report'] = result.data['report']
-            if 'sections' in result.data:
-                session.context['voice_sections'] = result.data['sections']
-            if 'final_video' in result.data:
-                session.context['final_video'] = result.data['final_video']
-            if 'subtitle_file' in result.data:
-                session.context['subtitle_file'] = result.data['subtitle_file']
+            if "ideas" in result.data:
+                session.context["video_ideas"] = result.data["ideas"]
+            if "script" in result.data:
+                session.context["script"] = result.data["script"]
+            if "prompts" in result.data:
+                session.context["image_prompts"] = result.data
+            if "images" in result.data:
+                session.context["generated_images"] = result.data["images"]
+            if "videos" in result.data:
+                session.context["generated_videos"] = result.data["videos"]
+            if "report" in result.data:
+                session.context["benchmark_report"] = result.data["report"]
+            if "sections" in result.data:
+                session.context["voice_sections"] = result.data["sections"]
+            if "final_video" in result.data:
+                session.context["final_video"] = result.data["final_video"]
+            if "subtitle_file" in result.data:
+                session.context["subtitle_file"] = result.data["subtitle_file"]
 
         return result
 
@@ -1021,11 +1916,11 @@ class Orchestrator:
         return await self._handle_next_step(session)
 
     def _complete_result(self, session: Session) -> AgentResult:
-        channel = session.context.get('selected_channel_name', '')
-        idea = session.context.get('selected_video_idea', {})
-        idea_title = idea.get('title', '') if isinstance(idea, dict) else str(idea)
-        has_benchmark = 'benchmark_report' in session.context
-        final_video = session.context.get('final_video', '')
+        channel = session.context.get("selected_channel_name", "")
+        idea = session.context.get("selected_video_idea", {})
+        idea_title = idea.get("title", "") if isinstance(idea, dict) else str(idea)
+        has_benchmark = "benchmark_report" in session.context
+        final_video = session.context.get("final_video", "")
 
         msg = f"""**영상 제작이 완료되었습니다!**
 
@@ -1033,29 +1928,46 @@ class Orchestrator:
 **영상 주제:** {idea_title}
 """
         if has_benchmark:
-            msg += '**벤치마킹:** 완료\n'
+            msg += "**벤치마킹:** 완료\n"
 
         if final_video:
-            msg += f'\n**최종 영상:** `{Path(final_video).name}`'
-            msg += f'\n**저장 위치:** `{Path(final_video).parent}`'
+            msg += f"\n**최종 영상:** `{Path(final_video).name}`"
+            msg += f"\n**저장 위치:** `{Path(final_video).parent}`"
 
-        return AgentResult(
-            success=True,
-            step='completed',
-            message=msg,
-            data=session.context
+        _tmp_result_1031 = AgentResult(
+            success=True, step="completed", message=msg, data=session.context
         )
+        return self._format_response(session, _tmp_result_1031)
 
     def _format_response(self, session: Session, result: AgentResult) -> Dict[str, Any]:
+        # Save assistant response to history (optimized images)
+        optimized_response_images = []
+        if result.images:
+            for img in result.images:
+                try:
+                    optimized_response_images.append(optimize_image(img))
+                except:
+                    optimized_response_images.append(img)
+        self._add_to_history(
+            session,
+            "assistant",
+            result.message,
+            optimized_response_images,
+            session.current_step.value,
+        )
+
+        # Save session with history
+        self._save(session)
+
         return {
-            'session_id': session.id,
-            'current_step': session.current_step.value,
-            'message': result.message,
-            'images': result.images,
-            'needs_feedback': result.needs_feedback,
-            'data': result.data,
-            'success': result.success,
-            'context': session.context
+            "session_id": session.id,
+            "current_step": session.current_step.value,
+            "message": result.message,
+            "images": result.images,
+            "needs_feedback": result.needs_feedback,
+            "data": result.data,
+            "success": result.success,
+            "context": session.context,
         }
 
 

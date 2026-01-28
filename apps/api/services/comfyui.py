@@ -15,7 +15,7 @@ class ComfyUIService:
     async def queue_prompt(self, workflow: Dict[str, Any]) -> str:
         """워크플로우 실행 요청"""
         print(f"[ComfyUI] Queuing workflow with {len(workflow)} nodes")
-        print(f"[ComfyUI] Node types: {[n.get("class_type") for n in workflow.values()]}")
+        print(f"[ComfyUI] Node types: {[n.get('class_type') for n in workflow.values()]}")
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
@@ -62,6 +62,22 @@ class ComfyUIService:
             response.raise_for_status()
             return response.content
     
+    async def delete_output_file(self, filename: str, subfolder: str = ""):
+        """ComfyUI output 폴더에서 파일 삭제"""
+        import os
+        output_base = "/data/comfyui/output"
+        if subfolder:
+            file_path = os.path.join(output_base, subfolder, filename)
+        else:
+            file_path = os.path.join(output_base, filename)
+        
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                print(f"[ComfyUI] Deleted: {file_path}")
+        except Exception as e:
+            print(f"[ComfyUI] Failed to delete {file_path}: {e}")
+    
     async def execute_workflow(
         self,
         workflow: Dict[str, Any],
@@ -98,6 +114,9 @@ class ComfyUIService:
                             img_data = await self.get_image(filename, subfolder, img_type)
                             b64 = base64.b64encode(img_data).decode("utf-8")
                             images.append(f"data:image/png;base64,{b64}")
+                            
+                            # 이미지 가져온 후 ComfyUI output에서 삭제
+                            await self.delete_output_file(filename, subfolder)
                 
                 print(f"[ComfyUI] Generated {len(images)} images")
                 return images

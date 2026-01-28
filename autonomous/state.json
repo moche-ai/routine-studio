@@ -1,0 +1,426 @@
+{
+  "perfect_count": 0,
+  "total_iterations": 105,
+  "best_scores": {
+    "video_ideas": 8.0,
+    "script": 8.0
+  },
+  "improvements": {
+    "video_ideas": [
+      "비현실적 약속 문제 - '30일 배당으로 월 30만원'은 초기 투자금 약 9천만원 필요(배당률 4% 가정). 이런 맥락 없이 제목만 보면 과대광고로 인식되어 신뢰도 하락",
+      "제목이 '~하는 법', '~비법', '~전략' 등 금융 유튜브에서 이미 과포화된 클리셰 패턴 반복",
+      "숫자 남용 (1억, 30%, 10년, 5가지, 7가지, 15%, 3개월, 5배 등) - 신뢰도 하락 유발",
+      "제목이 너무 평범함 - '주식 손실, 왜 반복될까?'는 수백 개 유튜브 영상과 동일한 패턴",
+      "후킹이 구체성 부족 - '심리 함정 때문입니다'는 너무 추상적, 구체적 숫자나 사례 없음"
+    ],
+    "script": [
+      "주택자금 공제, 재택근무 공제, 퇴직연금은 이미 수백 개 채널에서 다룬 내용 - 차별화된 앵글 필요 (예: '회사가 절대 안 알려주는', '세무사도 모르는 2024 신설 공제')",
+      "오프닝이 너무 일반적임 - '월급 받고 남은 돈 저축'은 이미 수백 번 들은 클리셰",
+      "구체적인 페인포인트 부족 - 시청자가 '아 이거 내 얘기다!'라고 느낄 생생한 상황 묘사 없음",
+      "오프닝이 너무 일반적임 - '월급날 통장 보고 한숨'은 이미 수백 개 영상에서 쓴 클리셰",
+      "인트로에서 '200만 구독자, 100만 조회수' 자랑이 공감보다 권위 강조로 느껴짐 - 시청자와 거리감 생성"
+    ]
+  },
+  "history": [
+    {
+      "iteration": 2,
+      "timestamp": "2026-01-26T03:57:37.543784",
+      "ideas_score": 7.12,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 3,
+      "timestamp": "2026-01-26T03:59:33.861523",
+      "ideas_score": 8.0,
+      "script_score": 8.0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 4,
+      "timestamp": "2026-01-26T04:01:18.254580",
+      "ideas_score": 6.62,
+      "script_score": 7.8,
+      "is_perfect": false
+    },
+    {
+      "iteration": 5,
+      "timestamp": "2026-01-26T04:02:57.105143",
+      "ideas_score": 5.5,
+      "script_score": 6.3,
+      "is_perfect": false,
+      "evaluator": "claude"
+    },
+    {
+      "iteration": 6,
+      "timestamp": "2026-01-26T04:07:06.966717",
+      "ideas_score": 4.6,
+      "script_score": 5.0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 7,
+      "timestamp": "2026-01-26T14:13:26.883817",
+      "ideas_score": 5.9,
+      "script_score": 6.8,
+      "is_perfect": false
+    },
+    {
+      "iteration": 8,
+      "timestamp": "2026-01-26T14:16:53.102640",
+      "ideas_score": 6.5,
+      "script_score": 6.8,
+      "is_perfect": false
+    },
+    {
+      "iteration": 9,
+      "timestamp": "2026-01-26T14:18:35.479503",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 10,
+      "timestamp": "2026-01-26T14:20:13.504610",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 11,
+      "timestamp": "2026-01-26T14:21:55.644506",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 12,
+      "timestamp": "2026-01-26T14:23:36.334985",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 13,
+      "timestamp": "2026-01-26T14:25:18.401183",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 14,
+      "timestamp": "2026-01-26T14:27:12.428431",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 15,
+      "timestamp": "2026-01-26T14:28:53.239398",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 16,
+      "timestamp": "2026-01-26T14:30:42.663580",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 17,
+      "timestamp": "2026-01-26T14:32:21.317374",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 18,
+      "timestamp": "2026-01-26T14:34:10.828752",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 19,
+      "timestamp": "2026-01-26T14:35:43.714524",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 20,
+      "timestamp": "2026-01-26T14:37:24.185442",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 21,
+      "timestamp": "2026-01-26T14:39:06.058182",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 23,
+      "timestamp": "2026-01-26T14:42:49.763651",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 26,
+      "timestamp": "2026-01-26T14:47:35.397676",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 27,
+      "timestamp": "2026-01-26T14:49:19.696830",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 29,
+      "timestamp": "2026-01-26T14:51:49.524431",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 30,
+      "timestamp": "2026-01-26T14:53:22.056771",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 31,
+      "timestamp": "2026-01-26T14:54:48.461210",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 32,
+      "timestamp": "2026-01-26T14:57:11.915763",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 33,
+      "timestamp": "2026-01-26T14:58:50.584387",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 34,
+      "timestamp": "2026-01-26T15:00:59.782617",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 35,
+      "timestamp": "2026-01-26T15:02:19.922153",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 36,
+      "timestamp": "2026-01-26T15:04:24.864933",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 37,
+      "timestamp": "2026-01-26T15:05:48.961791",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 38,
+      "timestamp": "2026-01-26T15:07:58.494949",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 45,
+      "timestamp": "2026-01-26T15:16:24.024599",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 46,
+      "timestamp": "2026-01-26T15:17:27.695636",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 47,
+      "timestamp": "2026-01-26T15:18:36.093108",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 51,
+      "timestamp": "2026-01-26T15:23:18.632348",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 52,
+      "timestamp": "2026-01-26T15:24:20.200141",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 54,
+      "timestamp": "2026-01-26T15:26:42.264622",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 55,
+      "timestamp": "2026-01-26T15:27:50.964665",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 62,
+      "timestamp": "2026-01-26T15:40:46.475520",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 63,
+      "timestamp": "2026-01-26T15:42:01.367808",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 64,
+      "timestamp": "2026-01-26T15:43:39.196479",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 67,
+      "timestamp": "2026-01-26T15:46:52.152328",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 68,
+      "timestamp": "2026-01-26T15:47:57.893462",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 72,
+      "timestamp": "2026-01-26T15:52:30.553649",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 76,
+      "timestamp": "2026-01-26T15:56:43.775024",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 77,
+      "timestamp": "2026-01-26T15:58:39.232666",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 78,
+      "timestamp": "2026-01-26T15:59:46.664568",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 81,
+      "timestamp": "2026-01-26T16:03:07.486008",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 86,
+      "timestamp": "2026-01-26T16:09:10.471792",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 92,
+      "timestamp": "2026-01-26T16:15:49.680324",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 93,
+      "timestamp": "2026-01-26T16:16:58.417987",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 97,
+      "timestamp": "2026-01-26T16:21:08.694267",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 99,
+      "timestamp": "2026-01-26T16:23:29.668691",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 103,
+      "timestamp": "2026-01-26T16:28:09.699003",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    },
+    {
+      "iteration": 105,
+      "timestamp": "2026-01-26T16:30:34.887531",
+      "ideas_score": 0,
+      "script_score": 0,
+      "is_perfect": false
+    }
+  ]
+}

@@ -38,3 +38,11 @@ Thumbs.db
 
 # Autonomous venv
 autonomous/venv/
+
+# Models (large files)
+models/
+*.ckpt
+*.safetensors
+*.bin
+*.wav
+*.flac

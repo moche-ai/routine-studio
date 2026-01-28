@@ -1,7 +1,7 @@
-import { Chat } from "./components/Chat"
+import { Router } from './router'
 
 function App() {
-  return <Chat />
+  return <Router />
 }
 
 export default App

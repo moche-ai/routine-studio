@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from copy import deepcopy
 
-WORKFLOWS_DIR = Path("/data/routine/routine-studio-v2/workflows/v2")
+WORKFLOWS_DIR = Path("/app/workflows/v2")
 
 class WorkflowService:
     """워크플로우 로더 및 빌더 서비스"""
@@ -220,6 +220,35 @@ class WorkflowService:
             "output_prefix": output_prefix
         }
         return self.build_workflow("qwen_layered_edit", variables)
+
+
+    def build_qwen_edit_with_lora(
+        self,
+        input_image_b64: str,
+        edit_instruction: str,
+        denoise: float = 0.75,
+        lora_strength: float = 0.9,
+        steps: int = 30,
+        cfg: float = 5.0,
+        seed: int = -1,
+        output_prefix: str = "qwen_lora_edit"
+    ) -> Dict[str, Any]:
+        """Qwen 이미지 편집 + LoRA 워크플로우"""
+        workflow = self.build_workflow("qwen_edit_with_lora", {})
+        
+        # 플레이스홀더 교체
+        workflow["1"]["inputs"]["image"] = input_image_b64
+        workflow["6"]["inputs"]["prompt"] = edit_instruction
+        
+        # 파라미터 설정
+        workflow["5"]["inputs"]["strength_model"] = lora_strength
+        workflow["8"]["inputs"]["denoise"] = denoise
+        workflow["8"]["inputs"]["steps"] = steps
+        workflow["8"]["inputs"]["cfg"] = cfg
+        workflow["8"]["inputs"]["seed"] = seed if seed != -1 else random.randint(0, 2**32-1)
+        workflow["10"]["inputs"]["filename_prefix"] = output_prefix
+        
+        return workflow
 
     def build_character_consistent(
         self,

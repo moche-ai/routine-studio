@@ -336,7 +336,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def cleanup_session_files(session_id: str, base_path: str = "/data/routine/routine-studio-v2"):
+def cleanup_session_files(session_id: str, base_path: str = "/app"):
     """세션 관련 파일 정리"""
     cleaned = []
     
@@ -361,7 +361,7 @@ def cleanup_session_files(session_id: str, base_path: str = "/data/routine/routi
     return cleaned
 
 
-def cleanup_generated_assets(project, base_path: str = "/data/routine/routine-studio-v2"):
+def cleanup_generated_assets(project, base_path: str = "/app"):
     """GeneratedAsset의 file_path 파일들 삭제"""
     cleaned = []
     
@@ -455,7 +455,7 @@ async def delete_benchmark(benchmark_id: int, db: Session = Depends(get_db)):
     
     # 벤치마크 캐시 JSON 파일 삭제
     cleaned_files = []
-    cache_dir = "/data/routine/routine-studio-v2/benchmark_cache"
+    cache_dir = "/app/benchmark_cache"
     
     if benchmark.channel_url:
         # cache_key 생성해서 파일 찾기

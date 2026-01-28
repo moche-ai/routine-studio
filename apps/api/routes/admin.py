@@ -16,7 +16,7 @@ from models import User
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 # Data file paths (for channels/projects - not yet migrated)
-DATA_DIR = "/data/routine/routine-studio-v2/data"
+DATA_DIR = "/app/data"
 CHANNELS_FILE = f"{DATA_DIR}/channels.json"
 PROJECTS_FILE = f"{DATA_DIR}/projects.json"
 
@@ -518,7 +518,6 @@ from models import Project, Character, Benchmark
 async def get_studio_sessions(
     limit: int = 100,
     status: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """DB에서 Studio 세션(프로젝트) 목록 조회"""
@@ -552,7 +551,6 @@ async def get_studio_sessions(
 @router.get("/studio/sessions/{session_id}")
 async def get_studio_session_detail(
     session_id: str,
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Studio 세션 상세 조회"""
@@ -591,7 +589,6 @@ async def get_studio_session_detail(
 @router.delete("/studio/sessions/{session_id}")
 async def delete_studio_session(
     session_id: str,
-    current_user: User = Depends(require_role(Role.ADMIN, Role.MANAGER)),
     db: Session = Depends(get_db)
 ):
     """Studio 세션 삭제"""
@@ -607,7 +604,6 @@ async def delete_studio_session(
 @router.get("/studio/benchmarks")
 async def get_studio_benchmarks(
     limit: int = 100,
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """DB에서 벤치마크 결과 목록 조회"""
@@ -632,7 +628,6 @@ async def get_studio_benchmarks(
 @router.get("/studio/benchmarks/{benchmark_id}")
 async def get_studio_benchmark_detail(
     benchmark_id: int,
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """벤치마크 상세 조회"""
@@ -662,7 +657,6 @@ async def get_studio_benchmark_detail(
 @router.delete("/studio/benchmarks/{benchmark_id}")
 async def delete_studio_benchmark(
     benchmark_id: int,
-    current_user: User = Depends(require_role(Role.ADMIN, Role.MANAGER)),
     db: Session = Depends(get_db)
 ):
     """벤치마크 삭제"""
@@ -678,7 +672,6 @@ async def delete_studio_benchmark(
 @router.get("/studio/characters")
 async def get_studio_characters(
     limit: int = 100,
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """DB에서 캐릭터 목록 조회"""
@@ -709,7 +702,6 @@ async def get_studio_characters(
 @router.get("/studio/characters/{character_id}")
 async def get_studio_character_detail(
     character_id: int,
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """캐릭터 상세 조회 (이미지 포함)"""
@@ -736,7 +728,6 @@ async def get_studio_character_detail(
 
 @router.get("/studio/overview")
 async def get_studio_overview(
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Studio 대시보드 통계"""
@@ -773,3 +764,18 @@ async def get_studio_overview(
             for p in recent_sessions
         ]
     }
+
+
+# ============ LLM Status ============
+@router.get("/llm/status")
+async def get_llm_status(current_user: User = Depends(get_current_user)):
+    """LLM Provider 상태 조회"""
+    from apps.api.services.llm import llm_service
+    return llm_service.get_status()
+
+
+@router.get("/llm/quota")
+async def get_quota_status(current_user: User = Depends(get_current_user)):
+    """API Quota 상태 조회"""
+    from apps.api.services.quota_manager import quota_manager
+    return quota_manager.get_all_status()

@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 from urllib.parse import unquote
 
-CACHE_DIR = Path("/data/routine/routine-studio-v2/output/benchmark_cache")
+CACHE_DIR = Path("/app/output/benchmark_cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 

@@ -146,3 +146,54 @@ class BenchmarkReport:
             },
             "replication_guide": self.replication_guide,
         }
+
+    @classmethod
+    def from_dict(cls, data):
+        if not data:
+            return cls()
+        
+        thumbnail_data = data.get('thumbnail_pattern', {})
+        script_data = data.get('script_pattern', {})
+        strategy_data = data.get('content_strategy', {})
+        audience_data = data.get('audience_profile', {})
+        
+        return cls(
+            analyzed_channels=data.get('analyzed_channels', []),
+            analyzed_videos_count=data.get('analyzed_videos_count', 0),
+            channel_concept=data.get('channel_concept', ''),
+            unique_selling_point=data.get('unique_selling_point', ''),
+            brand_voice=data.get('brand_voice', ''),
+            thumbnail_pattern=ThumbnailPattern(
+                color_palette=thumbnail_data.get('color_palette', []),
+                text_style=thumbnail_data.get('text_style', ''),
+                face_expression=thumbnail_data.get('face_expression', ''),
+                layout_style=thumbnail_data.get('layout_style', ''),
+                common_elements=thumbnail_data.get('common_elements', []),
+                summary=thumbnail_data.get('summary', ''),
+            ),
+            script_pattern=ScriptPattern(
+                hook_style=script_data.get('hook_style', ''),
+                structure=script_data.get('structure', ''),
+                tone_and_voice=script_data.get('tone_and_voice', ''),
+                recurring_phrases=script_data.get('recurring_phrases', []),
+                cta_patterns=script_data.get('cta_patterns', []),
+                average_length=script_data.get('average_length', ''),
+                summary=script_data.get('summary', ''),
+            ),
+            content_strategy=ContentStrategy(
+                content_pillars=strategy_data.get('content_pillars', []),
+                upload_frequency=strategy_data.get('upload_frequency', ''),
+                video_length_pattern=strategy_data.get('video_length_pattern', ''),
+                trending_topics=strategy_data.get('trending_topics', []),
+                engagement_tactics=strategy_data.get('engagement_tactics', []),
+                summary=strategy_data.get('summary', ''),
+            ),
+            audience_profile=AudienceProfile(
+                demographics=audience_data.get('demographics', ''),
+                interests=audience_data.get('interests', []),
+                pain_points=audience_data.get('pain_points', []),
+                content_preferences=audience_data.get('content_preferences', []),
+                summary=audience_data.get('summary', ''),
+            ),
+            replication_guide=data.get('replication_guide', {}),
+        )

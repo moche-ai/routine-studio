@@ -25,7 +25,7 @@
       "class_type": "DualCLIPLoader",
       "inputs": {
         "clip_name1": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
-        "clip_name2": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "clip_name2": "umt5-xxl-enc-bf16.safetensors",
         "type": "hunyuan_image"
       }
     },

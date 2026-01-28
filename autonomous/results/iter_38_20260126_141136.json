@@ -1,0 +1,15 @@
+{
+  "iteration": 38,
+  "ideas": {
+    "content": null,
+    "score": 0,
+    "is_perfect": false,
+    "error": "Server error '500 Internal Server Error' for url 'http://localhost:8017/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+  },
+  "script": {
+    "content": null,
+    "score": 0,
+    "is_perfect": false,
+    "error": "Server error '500 Internal Server Error' for url 'http://localhost:8017/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+  }
+}

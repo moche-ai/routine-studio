@@ -1,4 +1,5 @@
 """YouTube 채널 브랜딩 에이전트 (로고, 배너, 워터마크)"""
+from agents.config import agent_settings
 
 import sys
 import os
@@ -12,7 +13,7 @@ from pathlib import Path
 from enum import Enum
 from datetime import datetime
 
-sys.path.append("/data/routine/routine-studio-v2")
+sys.path.append("/app")
 
 from agents.base import BaseAgent, AgentResult, AgentStatus
 
@@ -105,8 +106,8 @@ BRANDING_SPECS = {
 class LogoGeneratorAgent(BaseAgent):
     """YouTube 채널 브랜딩 생성 에이전트 (로고, 배너, 워터마크)"""
     
-    COMFYUI_URL = "http://localhost:8188"
-    OUTPUT_DIR = Path("/data/routine/routine-studio-v2/output/branding")
+    COMFYUI_URL = agent_settings.comfyui_url
+    OUTPUT_DIR = Path("/app/output/branding")
     
     def __init__(self):
         super().__init__("LogoGeneratorAgent")

@@ -1,0 +1,20 @@
+{
+  "cfa8526e-6272-4ce0-b1e5-e2f9f20324a7": {
+    "id": "cfa8526e-6272-4ce0-b1e5-e2f9f20324a7",
+    "username": "admin",
+    "password": "$2b$12$tRf8de1R9XFWUCcyxE/11ent24G4ZqNSSnQfSF7MIuGzedZ7ADPF2",
+    "name": "관리자",
+    "role": "ADMIN",
+    "is_approved": true,
+    "created_at": "2026-01-27T10:05:44.761181"
+  },
+  "afe1f99a-0e3b-43a8-8bd5-09ccc9ed26b4": {
+    "id": "afe1f99a-0e3b-43a8-8bd5-09ccc9ed26b4",
+    "username": "testuser",
+    "password": "$2b$12$dQn1xMKKEkUYd4EyTH.k0eqpR8MO2WzUCjWdY0.7w.uXKOzb7yHAC",
+    "name": "테스트 유저",
+    "role": "VIEWER",
+    "is_approved": false,
+    "created_at": "2026-01-27T11:02:09.459191"
+  }
+}

@@ -5,7 +5,7 @@ import sys
 from typing import Dict, Any, Optional
 from datetime import datetime
 
-sys.path.insert(0, "/data/routine/routine-studio-v2/apps/api")
+sys.path.insert(0, "/app/apps/api")
 
 from database import get_db_context
 from models import Project, Character

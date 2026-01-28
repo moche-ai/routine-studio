@@ -16,9 +16,10 @@ interface Props {
 
 const WORKFLOW_STEPS: StatusStep[] = [
   { id: 'channel_name', label: '채널명 생성', status: 'pending', detail: 'LLM으로 채널명 후보 생성' },
+  { id: 'benchmarking', label: '벤치마킹', status: 'pending', detail: '채널 벤치마킹 분석' },
   { id: 'character', label: '캐릭터 생성', status: 'pending', detail: 'ComfyUI로 이미지 생성' },
-  { id: 'video_ideas', label: '영상 아이디어', status: 'pending', detail: 'LLM으로 아이디어 생성' },
-  { id: 'script', label: '대본 작성', status: 'pending', detail: 'LLM으로 스크립트 작성' },
+  { id: 'tts_settings', label: '음성 설정', status: 'pending', detail: 'TTS 음성 설정' },
+  { id: 'logo', label: '브랜딩', status: 'pending', detail: '로고/배너/워터마크 생성' },
 ]
 
 export function AgentStatus({ currentStep, isLoading }: Props) {
@@ -67,6 +68,13 @@ export function AgentStatus({ currentStep, isLoading }: Props) {
         '채널명 후보 생성 중...',
         '결과 정리 중...'
       ],
+      benchmarking: [
+        '채널 분석 준비 중...',
+        '유사 채널 검색 중...',
+        '벤치마킹 데이터 수집 중...',
+        '분석 리포트 생성 중...',
+        '결과 정리 중...'
+      ],
       character: [
         '캐릭터 설정 분석 중...',
         '이미지 프롬프트 생성 중...',
@@ -74,18 +82,18 @@ export function AgentStatus({ currentStep, isLoading }: Props) {
         '이미지 생성 중... (약 30초 소요)',
         '이미지 후처리 중...'
       ],
-      video_ideas: [
-        '채널 정보 로딩 중...',
-        '트렌드 분석 중...',
-        'LLM에 요청 전송 중...',
-        '아이디어 생성 중...',
-        '결과 포맷팅 중...'
+      tts_settings: [
+        '음성 옵션 준비 중...',
+        '샘플 음성 로딩 중...',
+        'TTS 설정 중...',
+        '미리듣기 생성 중...',
+        '결과 정리 중...'
       ],
-      script: [
-        '영상 컨셉 분석 중...',
-        '구조 설계 중...',
-        'LLM에 요청 전송 중...',
-        '대본 작성 중... (약 1분 소요)',
+      logo: [
+        '브랜딩 옵션 준비 중...',
+        '로고 생성 중...',
+        '배너 생성 중...',
+        '워터마크 생성 중...',
         '결과 정리 중...'
       ]
     }

@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import sys
 
-sys.path.append('/data/routine/routine-studio-v2')
+sys.path.append('/app')
 
 from apps.api.services.storage import storage_service
 

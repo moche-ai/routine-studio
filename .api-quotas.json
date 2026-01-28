@@ -1,0 +1,27 @@
+{
+  "daily": {
+    "groq": {
+      "used": 13,
+      "date": "2026-01-27"
+    },
+    "openrouter": {
+      "used": 1,
+      "date": "2026-01-27"
+    },
+    "gemini": {
+      "used": 0,
+      "date": "2026-01-27"
+    }
+  },
+  "monthly": {
+    "tavily": {
+      "used": 0,
+      "month": "2026-01"
+    },
+    "brave": {
+      "used": 0,
+      "month": "2026-01"
+    }
+  },
+  "blocked": []
+}

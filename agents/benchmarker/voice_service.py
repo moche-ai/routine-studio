@@ -1,4 +1,5 @@
 """YouTube 음성 추출 및 Qwen3-TTS 음성 복제 서비스"""
+from agents.config import agent_settings
 
 import asyncio
 import base64
@@ -28,7 +29,7 @@ class VoiceService:
     
     def __init__(
         self, 
-        tts_base_url: str = "http://localhost:8310",
+        tts_base_url: str = agent_settings.tts_base_url,
         ytdlp_path: str = "yt-dlp",
         ffmpeg_path: str = "ffmpeg"
     ):

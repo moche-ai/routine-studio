@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 from urllib.parse import unquote
 
-sys.path.insert(0, "/data/routine/routine-studio-v2/apps/api")
+sys.path.insert(0, "/app/apps/api")
 
 from database import get_db_context
 from models import Benchmark

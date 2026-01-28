@@ -7,8 +7,8 @@ import json
 import base64
 from typing import Dict, Any, Optional, List, Tuple
 
-sys.path.append("/data/routine/routine-studio-v2")
-sys.path.append("/data/routine/routine-studio-v2/apps/api")
+sys.path.append("/app")
+sys.path.append("/app/apps/api")
 
 from services.vision import vision_service
 
@@ -151,7 +151,7 @@ async def test_validator():
 
     # 이전에 생성한 이미지들로 테스트
     import os
-    output_dir = "/data/routine/routine-studio-v2/output"
+    output_dir = "/app/output"
 
     # 최근 생성된 이미지 찾기
     files = sorted([f for f in os.listdir(output_dir) if f.endswith(".png")])[-5:]

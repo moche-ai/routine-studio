@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 import base64
 
-BASE_OUTPUT_DIR = Path('/data/routine/routine-studio-v2/output')
+BASE_OUTPUT_DIR = Path('/app/output')
 
 class StorageService:
     """에셋 저장 서비스"""
