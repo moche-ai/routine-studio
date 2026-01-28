@@ -6,7 +6,7 @@ import re
 import base64
 from typing import Dict, Any, List, Optional
 
-sys.path.append("/data/routine/routine-studio-v2")
+sys.path.append("/app")
 
 from agents.base import BaseAgent, AgentResult, AgentStatus
 from apps.api.services.llm import llm_service
@@ -911,10 +911,13 @@ Synthesize the patterns and return JSON:
             response = await llm_service.generate(prompt, temperature=0.5, max_tokens=1024)
             concept_data = self._parse_json(response)
 
+            print(f"[DEBUG] Channel concept LLM response length: {len(response)}")
+            print(f"[DEBUG] Channel concept LLM response: [{response[:300]}...]")
             if concept_data:
                 self.report.channel_concept = concept_data.get("channel_concept", "")
                 self.report.unique_selling_point = concept_data.get("unique_selling_point", "")
                 self.report.brand_voice = concept_data.get("brand_voice", "")
+                print(f"[DEBUG] Set channel_concept: [{self.report.channel_concept[:100]}]")
             else:
                 self.report.channel_concept = "(분석 실패: LLM 응답 파싱 실패)"
                 self.report.unique_selling_point = "(분석 실패: LLM 응답 파싱 실패)"
@@ -978,6 +981,11 @@ Synthesize the patterns and return JSON:
         channel_concept = self.report.channel_concept or ""
         usp = self.report.unique_selling_point or ""
         brand_voice = self.report.brand_voice or ""
+        
+        # DEBUG: Print context values
+        print(f"[DEBUG] channel_concept: [{channel_concept[:100] if channel_concept else 'EMPTY'}]")
+        print(f"[DEBUG] usp: [{usp[:100] if usp else 'EMPTY'}]")
+        print(f"[DEBUG] brand_voice: [{brand_voice[:100] if brand_voice else 'EMPTY'}]")
         thumbnail_pattern = self.report.thumbnail_pattern.summary if self.report.thumbnail_pattern else ""
         script_pattern = self.report.script_pattern.summary if self.report.script_pattern else ""
         content_strategy = self.report.content_strategy.summary if self.report.content_strategy else ""
@@ -991,7 +999,10 @@ Synthesize the patterns and return JSON:
                 usp=usp,
                 brand_voice=brand_voice
             )
+            print(f"[DEBUG] Channel setup prompt length: {len(prompt)}")
             response = await llm_service.generate(prompt, temperature=0.7, max_tokens=1024)
+            print(f"[DEBUG] Channel setup response length: {len(response)}")
+            print(f"[DEBUG] Channel setup response: [{response[:300] if response else 'EMPTY'}...]")
             data = self._parse_json(response)
             if data:
                 guide["channel_setup"] = data
